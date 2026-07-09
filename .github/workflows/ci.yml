@@ -93,6 +93,10 @@ jobs:
     name: govulncheck
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      # Use the toolchain setup-go installs (latest 1.26.x patch), never let Go
+      # silently download the older version pinned in go.mod.
+      GOTOOLCHAIN: local
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -110,7 +114,9 @@ jobs:
           fi
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
-          go-version-file: go.mod
+          # Resolve the newest 1.26.x patch instead of go.mod's exact pin, so the
+          # scan always runs against the latest patched stdlib.
+          go-version: "1.26"
       - run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
