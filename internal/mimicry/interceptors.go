@@ -1,4 +1,4 @@
-package main
+package mimicry
 
 import (
 	"encoding/json"
@@ -14,8 +14,9 @@ import (
 // shared context object across interceptor calls, so we key the map by a stable
 // per-request signature derived from the request body + headers.
 //
-// Entries are single-use-ish: a bounded LRU keeps memory flat even if some
-// requests never reach the response side (e.g. upstream errors before body).
+// Entries are single-use-ish: a bounded FIFO (insertion-order eviction, not
+// recency-promoting) keeps memory flat even if some requests never reach the
+// response side (e.g. upstream errors before body).
 var rewriteStore = newBoundedRewriteStore(2048)
 
 // interceptRequestBefore applies the full forward mimicry before credential
@@ -78,10 +79,13 @@ func interceptResponse(raw []byte) ([]byte, error) {
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, err
 	}
-	if !currentConfig().ObfuscateToolNames {
+	rw := rewriteStore.get(requestSignature(req.RequestBody, req.RequestHeaders))
+	// A stored map means the matching forward request WAS obfuscated, so its
+	// response must be restored even if obfuscation was disabled mid-flight.
+	// Only the static-prefix fallback (rw == nil) is gated on the current config.
+	if rw == nil && !currentConfig().ObfuscateToolNames {
 		return okEnvelope(pluginapi.ResponseInterceptResponse{})
 	}
-	rw := rewriteStore.get(requestSignature(req.RequestBody, req.RequestHeaders))
 	restored := restoreToolNamesInBytes(req.Body, rw)
 	resp := pluginapi.ResponseInterceptResponse{}
 	if !bytesEqual(restored, req.Body) {
@@ -96,14 +100,16 @@ func interceptStreamChunk(raw []byte) ([]byte, error) {
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, err
 	}
-	if !currentConfig().ObfuscateToolNames {
-		return okEnvelope(pluginapi.StreamChunkInterceptResponse{})
-	}
 	// The header-init call carries no payload; nothing to reverse.
 	if req.ChunkIndex == pluginapi.StreamChunkHeaderInitIndex || len(req.Body) == 0 {
 		return okEnvelope(pluginapi.StreamChunkInterceptResponse{})
 	}
 	rw := rewriteStore.get(requestSignature(req.RequestBody, req.RequestHeaders))
+	// A stored map means the matching forward request WAS obfuscated, so its
+	// chunks must be restored even if obfuscation was disabled mid-stream.
+	if rw == nil && !currentConfig().ObfuscateToolNames {
+		return okEnvelope(pluginapi.StreamChunkInterceptResponse{})
+	}
 	restored := restoreToolNamesInBytes(req.Body, rw)
 	resp := pluginapi.StreamChunkInterceptResponse{}
 	if !bytesEqual(restored, req.Body) {
@@ -118,7 +124,9 @@ func interceptStreamChunk(raw []byte) ([]byte, error) {
 func isAnthropicClaudeRequest(sourceFormat string, body []byte) bool {
 	switch strings.ToLower(strings.TrimSpace(sourceFormat)) {
 	case "claude", "anthropic", "":
-		// Empty source format: fall back to a shape probe (messages + model).
+		// Empty source format is treated as native Anthropic: any non-empty body
+		// is processed (per SPEC-001). Translated OpenAI/Gemini paths carry a
+		// non-empty source format and fall through to the default case below.
 		return len(body) > 0
 	default:
 		return false
@@ -165,7 +173,8 @@ func headerValue(h http.Header, key string) string {
 	return h.Get(key)
 }
 
-// boundedRewriteStore is a tiny mutex-guarded LRU keyed by request signature.
+// boundedRewriteStore is a tiny mutex-guarded bounded FIFO keyed by request
+// signature. get() does not promote entries, so eviction is insertion-order.
 type boundedRewriteStore struct {
 	mu       sync.Mutex
 	capacity int

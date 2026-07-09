@@ -1,4 +1,4 @@
-package main
+package mimicry
 
 import (
 	"fmt"
@@ -151,6 +151,8 @@ func hasClaudeCodePrefix(text string) bool {
 func buildClaudeCodeSystemBlocks(expansion string) []byte {
 	billing := fmt.Sprintf("cc_version=%s; cc_entrypoint=cli;", cliVersion())
 	// [2] carries the ephemeral cache breakpoint (stable cache prefix).
+	// Errors are discarded: appending a well-formed block to the constant `[]`
+	// scaffold via sjson cannot fail for these fixed paths and valid JSON inputs.
 	arr := `[]`
 	arr, _ = sjsonSetRawString(arr, "-1", jsonTextBlock(billing, false))
 	arr, _ = sjsonSetRawString(arr, "-1", jsonTextBlock(claudeCodeSystemPrompt, false))
@@ -162,6 +164,8 @@ func buildClaudeCodeSystemBlocks(expansion string) []byte {
 // ephemeral cache_control breakpoint.
 func jsonTextBlock(text string, withCache bool) string {
 	block := `{"type":"text"}`
+	// Errors discarded: sjson.SetRaw on the constant `{"type":"text"}` scaffold
+	// with a valid raw JSON value cannot fail for these fixed paths.
 	block, _ = sjson.SetRaw(block, "text", jsonString(text))
 	if withCache {
 		block, _ = sjson.SetRaw(block, "cache_control", fmt.Sprintf(`{"type":"ephemeral","ttl":%q}`, defaultCacheControlTTL))
@@ -172,6 +176,8 @@ func jsonTextBlock(text string, withCache bool) string {
 // prependSystemAsMessages inserts a user/assistant pair carrying the original
 // system prompt at the head of messages[].
 func prependSystemAsMessages(body []byte, originalSystemText string) []byte {
+	// Errors discarded: sjson.SetRaw on the constant role scaffolds with a valid
+	// raw JSON content array cannot fail for these fixed paths.
 	instr := `{"role":"user"}`
 	instr, _ = sjson.SetRaw(instr, "content", `[{"type":"text","text":`+jsonString("[System Instructions]\n"+originalSystemText)+`}]`)
 	ack := `{"role":"assistant"}`

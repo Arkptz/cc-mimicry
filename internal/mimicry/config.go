@@ -1,15 +1,13 @@
-package main
+package mimicry
 
 import (
 	"encoding/json"
+	"fmt"
 	"sync"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 	"gopkg.in/yaml.v3"
 )
-
-// pluginVersion is injected at build time via -ldflags "-X main.pluginVersion=...".
-var pluginVersion = "0.1.0"
 
 // pluginConfig is the plugins.configs.cc-mimicry YAML subtree.
 type pluginConfig struct {
@@ -83,21 +81,37 @@ func decodeConfigYAML(configYAML []byte, cfg *pluginConfig) error {
 	if errUnmarshal := yaml.Unmarshal(configYAML, &probe); errUnmarshal != nil {
 		return errUnmarshal
 	}
-	decodeBool(probe, "obfuscate_tool_names", &cfg.ObfuscateToolNames)
-	decodeBool(probe, "inject_system_prompt", &cfg.InjectSystemPrompt)
-	decodeBool(probe, "cache_breakpoints", &cfg.CacheBreakpoints)
-	decodeBool(probe, "fill_fingerprint", &cfg.FillFingerprint)
-	decodeBool(probe, "normalize_headers", &cfg.NormalizeHeaders)
+	for _, f := range []struct {
+		key string
+		dst *bool
+	}{
+		{"obfuscate_tool_names", &cfg.ObfuscateToolNames},
+		{"inject_system_prompt", &cfg.InjectSystemPrompt},
+		{"cache_breakpoints", &cfg.CacheBreakpoints},
+		{"fill_fingerprint", &cfg.FillFingerprint},
+		{"normalize_headers", &cfg.NormalizeHeaders},
+	} {
+		if err := decodeBool(probe, f.key, f.dst); err != nil {
+			return fmt.Errorf("config key %q: %w", f.key, err)
+		}
+	}
 	if node, ok := probe["system_expansion"]; ok {
-		_ = node.Decode(&cfg.SystemExpansion)
+		if err := node.Decode(&cfg.SystemExpansion); err != nil {
+			return fmt.Errorf("config key %q: %w", "system_expansion", err)
+		}
 	}
 	return nil
 }
 
-func decodeBool(m map[string]yaml.Node, key string, dst *bool) {
-	if node, ok := m[key]; ok {
-		_ = node.Decode(dst)
+// decodeBool decodes a present key into dst, returning an error on a type
+// mismatch so a mistyped toggle is surfaced instead of silently keeping the
+// default. A missing key leaves dst untouched.
+func decodeBool(m map[string]yaml.Node, key string, dst *bool) error {
+	node, ok := m[key]
+	if !ok {
+		return nil
 	}
+	return node.Decode(dst)
 }
 
 func configFields() []pluginapi.ConfigField {
