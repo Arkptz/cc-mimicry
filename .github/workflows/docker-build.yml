@@ -1,0 +1,110 @@
+# Build and push a Docker image to GHCR (GitHub Container Registry).
+# Contract: SPEC-004 (universal docker-build workflow). Action SHAs are pinned.
+name: Build and push Docker image to GHCR
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+# Least-privilege: packages:write to push to GHCR; NO id-token:write (F12 fix).
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-${{ github.workflow }}-${{ github.ref_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  build_push:
+    name: Build and push ${{ matrix.image_suffix || 'image' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Single flat image carrying the compiled cc-mimicry.so. SDK version +
+        # commit and the plugin version are passed as direct build-args below.
+        include:
+          - image_suffix: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      # Lowercase image repo: GitHub owner/repo may contain uppercase, GHCR requires lowercase.
+      # R2-F8 fix: shell step emits to GITHUB_OUTPUT, referenced as steps.repo.outputs.image_repo.
+      - name: Compute lowercase image repo
+        id: repo
+        run: |
+          image_repo=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "image_repo=${image_repo}" >> "$GITHUB_OUTPUT"
+
+      - name: Read CPA SDK version pin
+        id: cpa
+        run: |
+          echo "version=$(cat .cpa-version)" >> "$GITHUB_OUTPUT"
+          echo "commit=$(cat .cpa-commit)" >> "$GITHUB_OUTPUT"
+
+      # GitOps always-unique tag: branch-sha7-iso8601z format.
+      # R2-F2/F3 fix: computed in a shell step, emitted to GITHUB_OUTPUT, never inlined in metadata-action.
+      # enable gate: fires on push+tag+workflow_dispatch; skips PR (event_name != pull_request).
+      - name: Compute GitOps tag
+        id: gitops
+        run: |
+          BRANCH=$(echo "$GITHUB_REF_NAME" | tr -c '[:alnum:]._-' '-' | cut -c1-64)
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          echo "gitops_tag=${BRANCH}-${SHORT_SHA}-${TIMESTAMP}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ steps.repo.outputs.image_repo }}${{ matrix.image_suffix }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.gitops.outputs.gitops_tag }},enable=${{ github.event_name != 'pull_request' }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            CPA_VERSION=${{ steps.cpa.outputs.version }}
+            CPA_COMMIT=${{ steps.cpa.outputs.commit }}
+            VERSION=${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'dev' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Alternative registry cache (uncomment to use, update image path to match):
+          # cache-from: type=registry,ref=ghcr.io/${{ steps.repo.outputs.image_repo }}/cache${{ matrix.image_suffix }}
+          # cache-to: type=registry,ref=ghcr.io/${{ steps.repo.outputs.image_repo }}/cache${{ matrix.image_suffix }},mode=max
+          platforms: linux/amd64
+          # Opt-in multi-arch (uncomment to enable):
+          # platforms: linux/amd64,linux/arm64
+          provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
+          sbom: false
