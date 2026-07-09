@@ -108,3 +108,43 @@ jobs:
           # platforms: linux/amd64,linux/arm64
           provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
           sbom: false
+
+  # On a v* tag, publish a GitHub Release. Gated behind build_push so the release
+  # only appears once the semver-tagged image is actually in GHCR. Re-validates
+  # the SDK pin against the tagged commit so a release can never point at a .so
+  # built against a moved/mismatched CLIProxyAPI SDK.
+  release:
+    name: GitHub Release
+    needs: build_push
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Verify pinned CPA SDK tag resolves to the pinned commit
+        run: |
+          CPA_VERSION=$(cat .cpa-version)
+          CPA_COMMIT=$(cat .cpa-commit)
+          ACTUAL=$(git ls-remote https://github.com/router-for-me/CLIProxyAPI.git "refs/tags/${CPA_VERSION}^{}" | cut -f1)
+          if [ -z "$ACTUAL" ]; then
+            ACTUAL=$(git ls-remote https://github.com/router-for-me/CLIProxyAPI.git "refs/tags/${CPA_VERSION}" | cut -f1)
+          fi
+          if [ "$ACTUAL" != "$CPA_COMMIT" ]; then
+            echo "::error::CPA SDK tag $CPA_VERSION resolves to $ACTUAL, expected pinned $CPA_COMMIT"
+            exit 1
+          fi
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          IMAGE_REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "$TAG" \
+            --generate-notes \
+            --notes "Plugin image: \`ghcr.io/${IMAGE_REPO}:${TAG#v}\` (\`/plugin/cc-mimicry.so\`). CPA SDK: \`$(cat .cpa-version)\`."
