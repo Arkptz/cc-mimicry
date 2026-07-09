@@ -1,0 +1,24 @@
+version: "2"
+linters:
+  default: standard
+  enable:
+    - gosec
+    - gocritic
+    - errorlint
+    - modernize
+    - revive
+  exclusions:
+    rules:
+      # G103: unsafe.Pointer is required at the CGO FFI boundary (main.go).
+      # G404 + G115: math/rand and the uint64->int64 seed cast are intentional —
+      # the tool-name shuffle needs a stable, reproducible seed (not crypto), and
+      # the FNV hash seed deliberately wraps on conversion.
+      - linters:
+          - gosec
+        text: "G103|G404|G115"
+      # The C-ABI entrypoint file uses unsafe + an empty main{}; gocritic/revive
+      # style checks on it are noise for a c-shared plugin.
+      - path: main\.go
+        linters:
+          - gocritic
+          - revive

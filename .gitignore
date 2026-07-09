@@ -1,0 +1,21 @@
+# Build artifacts
+/bin/
+/dist/
+*.exe
+*.so
+*.dylib
+*.dll
+*.h
+
+# Editor/IDE
+.idea/
+.vscode/
+*.swp
+
+# Test
+coverage.out
+/tmp/
+
+# Go workspace — local-only SDK override (see README)
+go.work
+go.work.sum
