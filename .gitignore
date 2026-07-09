@@ -19,3 +19,6 @@ coverage.out
 # Go workspace — local-only SDK override (see README)
 go.work
 go.work.sum
+
+# dg local cache
+.dg/.cache.json
