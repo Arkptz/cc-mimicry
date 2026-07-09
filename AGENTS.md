@@ -2,7 +2,7 @@
 
 ## Stack
 
-- Language: Go 1.26.0 (pinned via the `go.mod` `go` directive + Nix `go_1_26` + `GOTOOLCHAIN=local`; see POL-002 — no redundant `toolchain` directive)
+- Language: Go 1.26.1 (pinned via the `go.mod` `go` directive + Nix `go_1_26` + `GOTOOLCHAIN=local`; see POL-002 — no redundant `toolchain` directive)
 - Test runner: `go test -race` (`gotestsum` for nicer output in the dev shell)
 - Formatter: `gofumpt` (strict superset of `gofmt`; enforced by pre-commit + agent hooks)
 - Linter: `golangci-lint` v2 (`gosec`/`gocritic`/`errorlint`/`modernize`/`revive`; zero-warning policy)

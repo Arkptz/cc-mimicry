@@ -88,7 +88,7 @@ The plugin ID is the filename without extension (`cc-mimicry`).
 
 Drop `cc-mimicry.so` into the host's plugin directory. CPA scans, in order:
 
-```
+```text
 <plugins-dir>/<goos>/<goarch>-<variant>/   e.g. plugins/linux/amd64-v3/
 <plugins-dir>/<goos>/<goarch>/             e.g. plugins/linux/amd64/
 <plugins-dir>/                             (flat fallback)
@@ -153,7 +153,7 @@ plugin correlates the forward `request.intercept_before` hook (which builds the
 tool-name rewrite map) with the `response.intercept_after` /
 `response.intercept_stream_chunk` hooks via a stable signature over the request
 body (plus a couple of request-id headers). The map lives in a bounded in-process
-LRU; entries for requests that never reach the response side age out.
+FIFO; entries for requests that never reach the response side age out.
 
 ## Decisions
 
