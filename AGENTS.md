@@ -2,7 +2,7 @@
 
 ## Stack
 
-- Language: Go 1.26.0 (pinned via the `go.mod` `toolchain` directive + Nix `go_1_26`)
+- Language: Go 1.26.0 (pinned via the `go.mod` `go` directive + Nix `go_1_26` + `GOTOOLCHAIN=local`; see POL-002 — no redundant `toolchain` directive)
 - Test runner: `go test -race` (`gotestsum` for nicer output in the dev shell)
 - Formatter: `gofumpt` (strict superset of `gofmt`; enforced by pre-commit + agent hooks)
 - Linter: `golangci-lint` v2 (`gosec`/`gocritic`/`errorlint`/`modernize`/`revive`; zero-warning policy)
@@ -32,8 +32,9 @@ govulncheck ./...                    # supply-chain vuln scan
 - NEVER ignore a returned `error` — check it, wrap it with `fmt.Errorf("...: %w", err)`,
   or explicitly discard it with a comment saying why.
 - ALWAYS take `context.Context` as the first parameter of functions that do I/O or block.
-- NEVER hand-edit `go.sum` — run `go mod tidy`. Keep the `go.mod` `go`/`toolchain`
-  lines in sync with `flake.nix`.
+- NEVER hand-edit `go.sum` — run `go mod tidy`. Keep the `go.mod` `go` directive in
+  sync with `flake.nix`'s `go_1_XX`. Do NOT add a redundant `toolchain` directive
+  equal to the `go` directive (Go strips it on tidy — see POL-002).
 - Avoid a naked `return` in a long function — name results only when it aids clarity.
 
 ## Agent setup in this project

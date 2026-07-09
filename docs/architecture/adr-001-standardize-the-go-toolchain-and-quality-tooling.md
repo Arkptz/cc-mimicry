@@ -1,11 +1,6 @@
 ---
 author: arkptz
-code_paths:
-- go.mod
-- .golangci.yml
-- Makefile
-- lefthook.yml
-- flake.nix
+code_paths: []
 date: 2026-07-08
 status: accepted
 superseded_by: ADR-002

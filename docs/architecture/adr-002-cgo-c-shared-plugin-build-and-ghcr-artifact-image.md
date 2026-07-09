@@ -29,10 +29,10 @@ cc-mimicry is a CLIProxyAPI plugin compiled as a CGO c-shared shared object (.so
 
 3. SDK version pin: .cpa-version (tag) + .cpa-commit (SHA) are the dual source of truth, read by Makefile, CI, and Dockerfile. Bumping the SDK changes only those two files.
 
-4. Three-layer Go toolchain pin at 1.26: go.mod go directive + toolchain go1.26.0 + Nix go_1_26 + GOTOOLCHAIN=local — same strategy as ADR-001 but at 1.26. This supersedes ADR-001's 1.24.13 standardization.
+4. Go 1.26 toolchain pin: the go.mod `go 1.26.0` directive + Nix `go_1_26` in the dev shell/CI + `GOTOOLCHAIN=local` (forbids silent toolchain downloads). A redundant `toolchain go1.26.0` directive is deliberately NOT used — Go strips a toolchain directive equal to the go directive on `go mod tidy` and then refuses to build until it is gone (see POL-002). This supersedes ADR-001's Go 1.24.13 standardization.
 ## Consequences
-
-
 ### Positive
 Plugin repo is fully self-contained; any CPA Dockerfile can COPY --from the GHCR image with no builder service; the SDK version is centralized and SHA-verified.
-### NegativeCGO requires gcc in CI (ubuntu-latest provides it). The .so is glibc-coupled: both plugin and host must use debian bookworm. Consumers pulling :latest onto a mismatched CPA host get a rejected plugin — mitigated by README guidance to pin version tags.
+
+### Negative
+CGO requires gcc in CI (ubuntu-latest provides it). The .so is glibc-coupled: both plugin and host must use debian bookworm. Consumers pulling :latest onto a mismatched CPA host get a rejected plugin — mitigated by README guidance to pin version tags.
