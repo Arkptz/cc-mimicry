@@ -1,0 +1,110 @@
+# syntax=docker/dockerfile:1
+# Full CPA+plugin runtime image: builds the Arkptz CLIProxyAPI fork with CGO
+# enabled (so it can dlopen c-shared plugins) and bakes the cc-mimicry.so
+# plugin into /CLIProxyAPI/plugins/linux/amd64/ so the resulting container
+# runs CPA with cc-mimicry pre-installed.
+#
+# Layout mirrors the upstream Dockerfile.plugins: debian:bookworm runtime,
+# binary at /CLIProxyAPI/CLIProxyAPI, plugins under /CLIProxyAPI/plugins/.
+#
+# Build:
+#   docker build -f Dockerfile.cpa-mimicry -t cpa-mimicry:dev .
+# Run:
+#   docker run --rm -p 8317:8317 \
+#     -v $PWD/config.yaml:/CLIProxyAPI/config.yaml:ro \
+#     cpa-mimicry:dev
+
+ARG GO_VERSION=1.26
+ARG CPA_REPO=https://github.com/Arkptz/CLIProxyAPI.git
+ARG CPA_REF=main
+ARG VERSION=dev
+
+# ---------------------------------------------------------------------------
+# Stage 1: clone the CLIProxyAPI fork once. Both later stages consume /CLIProxyAPI.
+# ---------------------------------------------------------------------------
+FROM golang:${GO_VERSION}-bookworm AS cpa-source
+ARG CPA_REPO
+ARG CPA_REF
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch "${CPA_REF}" "${CPA_REPO}" /CLIProxyAPI \
+    && git -C /CLIProxyAPI rev-parse HEAD > /CLIProxyAPI.commit
+
+# ---------------------------------------------------------------------------
+# Stage 2: build the CLIProxyAPI binary with CGO enabled (plugin-capable host).
+# ---------------------------------------------------------------------------
+FROM golang:${GO_VERSION}-bookworm AS cpa-builder
+WORKDIR /CLIProxyAPI
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential git \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=cpa-source /CLIProxyAPI /CLIProxyAPI
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go mod download
+ARG VERSION
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=1 GOOS=linux go build \
+      -buildvcs=false \
+      -ldflags="-s -w -X 'main.Version=${VERSION}'" \
+      -o /out/CLIProxyAPI ./cmd/server/
+
+# ---------------------------------------------------------------------------
+# Stage 3: build cc-mimicry.so against the same cloned CPA fork so the SDK
+# used by the plugin exactly matches the host binary above (glibc + SDK).
+# ---------------------------------------------------------------------------
+FROM golang:${GO_VERSION}-bookworm AS plugin-builder
+WORKDIR /src
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential git \
+    && rm -rf /var/lib/apt/lists/*
+# Provide the CPA source at the path the plugin's go.mod replace will point at.
+COPY --from=cpa-source /CLIProxyAPI /CLIProxyAPI
+COPY go.mod go.sum ./
+# Rewrite the local ../forks/CLIProxyAPI replace (used during dev on the host)
+# to the in-container clone so `go mod download` succeeds inside the sandbox.
+RUN go mod edit -replace github.com/router-for-me/CLIProxyAPI/v7=/CLIProxyAPI
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go mod download
+COPY . .
+# COPY . . overwrites go.mod with the repo copy; re-apply the replace.
+RUN go mod edit -replace github.com/router-for-me/CLIProxyAPI/v7=/CLIProxyAPI
+ARG VERSION
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=1 GOOS=linux go build \
+      -buildvcs=false \
+      -buildmode=c-shared \
+      -trimpath \
+      -ldflags="-s -w -X 'main.pluginVersion=${VERSION}'" \
+      -o /out/cc-mimicry.so . \
+    && rm -f /out/cc-mimicry.h
+
+# ---------------------------------------------------------------------------
+# Stage 4: runtime — debian:bookworm matching the CGO build's glibc.
+# ---------------------------------------------------------------------------
+FROM debian:bookworm AS runtime
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tzdata ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /CLIProxyAPI/plugins/linux/amd64
+COPY --from=cpa-builder /out/CLIProxyAPI /CLIProxyAPI/CLIProxyAPI
+COPY --from=cpa-source /CLIProxyAPI/config.example.yaml /CLIProxyAPI/config.example.yaml
+COPY --from=plugin-builder /out/cc-mimicry.so /CLIProxyAPI/plugins/linux/amd64/cc-mimicry.so
+WORKDIR /CLIProxyAPI
+EXPOSE 8317
+ENV TZ=Etc/UTC
+RUN ln -sf /usr/share/zoneinfo/${TZ} /etc/localtime && echo "${TZ}" > /etc/timezone
+
+ARG CPA_REF
+ARG VERSION
+LABEL org.opencontainers.image.title="cpa-mimicry" \
+      org.opencontainers.image.description="CLIProxyAPI (Arkptz fork) with cc-mimicry plugin baked in" \
+      org.opencontainers.image.source="https://github.com/Arkptz/cc-mimicry" \
+      cc-mimicry.cpa-fork-ref="${CPA_REF}" \
+      cc-mimicry.plugin-version="${VERSION}"
+
+CMD ["./CLIProxyAPI"]

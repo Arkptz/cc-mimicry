@@ -1,0 +1,28 @@
+# Minimal CLIProxyAPI config for running the cpa-mimicry image.
+# Copy to config.yaml and adjust api-keys / auth-dir before `docker compose up`.
+
+# Bind all interfaces inside the container; the compose file publishes only
+# 127.0.0.1:8317 on the host.
+host: ""
+port: 8317
+
+# Auth records for provider executors (Codex/Claude/Gemini/etc.) live here.
+# The compose file mounts a named volume onto /root/.cli-proxy-api so these
+# survive container recreation.
+auth-dir: "/root/.cli-proxy-api"
+
+# API keys required by clients hitting this proxy. Replace before use.
+api-keys:
+  - "change-me"
+
+debug: false
+
+# Plugin subsystem — cc-mimicry.so is baked into /CLIProxyAPI/plugins/linux/amd64/.
+# Must be enabled for the plugin to load.
+plugins:
+  enabled: true
+  dir: "plugins"
+  configs:
+    cc-mimicry:
+      enabled: true
+      priority: 1

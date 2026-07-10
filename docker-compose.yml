@@ -1,0 +1,26 @@
+# Run the CPA (Arkptz fork) + cc-mimicry plugin image locally.
+#
+# Usage:
+#   cp config.example.yaml config.yaml   # then edit api-keys, auth-dir, etc.
+#   docker compose up --build
+#
+# The image bakes cc-mimicry.so at /CLIProxyAPI/plugins/linux/amd64/. Enable it
+# from config.yaml (plugins.enabled: true, plugins.dir: "plugins").
+
+services:
+  cliproxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpa-mimicry
+    image: cpa-mimicry:local
+    ports:
+      - "127.0.0.1:8321:8317"
+    volumes:
+      - ./config.yaml:/CLIProxyAPI/config.yaml:ro
+      - cliproxy-data:/root/.cli-proxy-api
+    environment:
+      - TZ=Europe/Moscow
+    restart: unless-stopped
+
+volumes:
+  cliproxy-data:

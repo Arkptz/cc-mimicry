@@ -109,6 +109,76 @@ jobs:
           provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
           sbom: false
 
+  # Second image: the Arkptz CLIProxyAPI fork with cc-mimicry.so baked in.
+  # Built from source in-Dockerfile so it has no dependency on build_push; the
+  # two jobs run in parallel. Published to ghcr.io/<owner>/cpa-mimicry.
+  build_cpa_mimicry:
+    name: Build and push cpa-mimicry
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Compute lowercase image repo
+        id: repo
+        run: |
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "image=ghcr.io/${owner}/cpa-mimicry" >> "$GITHUB_OUTPUT"
+
+      - name: Compute GitOps tag
+        id: gitops
+        run: |
+          BRANCH=$(printf '%s' "$GITHUB_REF_NAME" | tr -c '[:alnum:]._-' '-' | cut -c1-64)
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          echo "gitops_tag=${BRANCH}-${SHORT_SHA}-${TIMESTAMP}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ steps.repo.outputs.image }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.gitops.outputs.gitops_tag }},enable=${{ github.event_name != 'pull_request' }}
+
+      - name: Build and push cpa-mimicry image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: Dockerfile.cpa-mimicry
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            CPA_REPO=https://github.com/Arkptz/CLIProxyAPI.git
+            CPA_REF=main
+            VERSION=${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'dev' }}
+          cache-from: type=gha,scope=cpa-mimicry
+          cache-to: type=gha,mode=max,scope=cpa-mimicry
+          platforms: linux/amd64
+          provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
+          sbom: false
+
   # On a v* tag, publish a GitHub Release. Gated behind build_push so the release
   # only appears once the semver-tagged image is actually in GHCR. Re-validates
   # the SDK pin against the tagged commit so a release can never point at a .so
