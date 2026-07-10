@@ -73,6 +73,9 @@ func configure(raw []byte) error {
 	if cfg.Surface == "" {
 		cfg.Surface = "cli"
 	}
+	if cfg.Surface != "cli" && cfg.Surface != "sdk-cli" {
+		return fmt.Errorf("unknown surface %q: must be \"cli\" or \"sdk-cli\"", cfg.Surface)
+	}
 	cfgMu.Lock()
 	activeCfg = cfg
 	cfgMu.Unlock()

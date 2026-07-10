@@ -3,7 +3,7 @@ author: arkptz
 code_paths:
 - internal/mimicry/mimicry.go
 - internal/mimicry/interceptors.go
-- internal/mimicry/egress_header_interceptor.go
+- internal/mimicry/egress_headers.go
 - internal/mimicry/toolrewrite.go
 - internal/mimicry/config.go
 date: 2026-07-10
@@ -24,10 +24,10 @@ As a CPA operator, I want the plugin to transform Anthropic /v1/messages request
 ## Scenarios
 - Forward pipeline order is: (1) system 4-block rewrite via plugin interceptor, (2) fingerprint fill, (3) tool-name obfuscation + last-tool cache breakpoint — mirroring applyRequestMimicry.
 - System rewrite produces exactly 4 blocks in system[]: [0] billing block with `x-anthropic-billing-header:` prefix and `cch=00000` placeholder; [1] surface-specific agent identifier block; [2] shared intro+security+System+DoingTasks+Tone content (~10676 chars) with `cache_control: {type: ephemeral, ttl: 1h, scope: global}`; [3] surface-specific `# Text output` block with `cache_control: {type: ephemeral, ttl: 1h}`.
-- System rewrite is owned by the plugin interceptor (body transform); header injection is owned by the new EgressHeaderInterceptor (P4 hook). Both are driven by the surface config in the plugin so body and headers are always atomic.
+- System rewrite is owned by the plugin interceptor (body transform); header injection is owned by the new EgressHeaderInterceptor (P4 hook). Both are driven by the surface config in the plugin. Surface coherence is atomic under stable config; a reconfigure during in-flight requests may cause a one-request divergence (body surface A with header surface B). Per-request surface pinning (R9) is not implemented — Metadata correlation is not populated by CPA.
 - System rewrite is skipped (no-op) when the system field already begins with the "You are Claude Code" identity prefix (no double-wrap).
 - System rewrite relocates the original system text into a messages[0] user + messages[1] assistant pair so the model still receives the caller's instructions.
-- Two surfaces are supported: `cli` (default — 11 beta tokens including redact-thinking-2025-05-14) and `sdk-cli` (10 beta tokens, omits redact-thinking-2025-05-14). Surface config in plugin drives both body blocks and egress headers atomically.
+- Two surfaces are supported: `cli` (default — 11 beta tokens including redact-thinking-2026-02-12) and `sdk-cli` (10 beta tokens, omits redact-thinking). Surface config in plugin drives both body blocks and egress headers. The Anthropic-Beta header is wholesale-replaced with the surface's exact token set; client-requested betas outside the set are intentionally dropped for fingerprint fidelity.
 - CPA xxHash64 signing (cch field): CPA's signer runs independently of ShouldCloak, over the final request body after the plugin has written the cch=00000 placeholder in block [0]. The skip-guard at CPA:1865 defers to the plugin billing prefix so no double-injection occurs.
 - Dead code removed: claudeCodeHeaderOverrides, mergeClaudeCodeBeta, headerValue, and NormalizeHeaders are no longer part of the pipeline; the normalize_headers config toggle is obsolete.
 - Tool-name obfuscation uses a static prefix map for 5 or fewer mimicable tools, and a dynamic FNV-seeded readable-alias shuffle for more than 5.

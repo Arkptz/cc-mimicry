@@ -26,19 +26,24 @@ Applied to Anthropic `/v1/messages` requests (source format `claude`/`anthropic`
      `<prefix><name[:3]><NN>`. Not md5 — the aliases stay human-readable.
    - *Server tools* (`web_search_20250305`, `computer_20250124`, …) are never
      renamed, since those names are Anthropic protocol semantics.
-2. **System prompt 3-block rewrite** — rebuilds `system` into the CLI's shape:
-   `[0]` billing attribution, `[1]` `You are Claude Code…` identity, `[2]` a
-   neutral expansion block with an ephemeral cache breakpoint. The original
-   system prompt is relocated into a `user`/`assistant` message pair so the model
-   still receives the caller's instructions. Skipped if `system` already looks
-   like Claude Code.
+2. **System prompt 4-block rewrite** — rebuilds `system` into the CLI 2.1.206 shape:
+   `[0]` billing attribution (`cch=00000` placeholder for CPA signing),
+   `[1]` surface-specific agent identity,
+   `[2]` shared intro/security/tone bundle (cache scope=global, ttl=1h),
+   `[3]` surface-specific `# Text output` section (cache ttl=1h).
+   The original system prompt is relocated into a `user`/`assistant` message pair
+   so the model still receives the caller's instructions. Skipped if `system`
+   already looks like Claude Code.
 3. **Cache breakpoint** — injects `cache_control: {type: ephemeral, ttl: 1h}` on
    the last tool (client-provided `ttl` is preserved).
 4. **Fingerprint fill** — sets `temperature`, `max_tokens`, and
    `context_management` (only when the `anthropic-beta` header enables it) to
    match the real CLI payload when absent.
-5. **Header normalization** — overrides `user-agent`, `x-app`, `anthropic-beta`,
-   `anthropic-version`, and `x-stainless-*` to CLI values.
+5. **Egress header override** (P4 hook) — overrides `user-agent`, `x-app`,
+   `anthropic-beta`, `anthropic-version`, `x-stainless-*`, and
+   `anthropic-dangerous-direct-browser-access` to CLI 2.1.206 values via the
+   CPA EgressHeaderInterceptor ABI hook (post-auth, pre-send). Strips
+   CPA-injected headers absent from real CLI captures.
 
 Each transform is individually toggleable (see [Config](#config)).
 
@@ -108,8 +113,7 @@ plugins:
       inject_system_prompt: true
       cache_breakpoints: true
       fill_fingerprint: true
-      normalize_headers: true
-      # system_expansion: "..."   # optional override
+      surface: cli            # "cli" (default) or "sdk-cli"
 ```
 
 ## Config
@@ -117,11 +121,10 @@ plugins:
 | Key | Default | Effect |
 |-----|---------|--------|
 | `obfuscate_tool_names` | `true` | Rename tools + reverse on responses/stream chunks. |
-| `inject_system_prompt` | `true` | 3-block system rewrite; relocate original system into messages. |
+| `inject_system_prompt` | `true` | 4-block surface-aware system rewrite; relocate original system into messages. |
 | `cache_breakpoints` | `true` | Ephemeral `cache_control` on the last tool. |
 | `fill_fingerprint` | `true` | Fill `temperature`/`max_tokens`/`context_management`. |
-| `normalize_headers` | `true` | CLI header overrides (`user-agent`, `anthropic-beta`, `x-stainless-*`, …). |
-| `system_expansion` | built-in | Override the neutral expansion block text. |
+| `surface` | `cli` | CLI entrypoint to impersonate: `cli` (interactive TUI, 11 betas) or `sdk-cli` (-p print, 10 betas). Unknown values are rejected at config load. |
 
 An omitted key keeps its default (`true`); set to `false` to disable a stage.
 

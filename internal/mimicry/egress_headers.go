@@ -48,9 +48,24 @@ func interceptEgressHeaders(raw []byte) ([]byte, error) {
 	return okEnvelope(buildEgressHeaderResponse(profile))
 }
 
+// headersToStrip lists CPA-injected headers that the real CLI 2.1.206 does NOT
+// send (verified absent across all 5 capture fixtures including key-preserving
+// fable5 captures). The host's mergeHeaders applies ClearHeaders before the
+// executor wholesale-replaces, so these headers are removed from the wire set.
+var headersToStrip = []string{
+	"X-Client-Request-Id",
+}
+
 // buildEgressHeaderResponse assembles the surface-specific header override. It
 // is factored out so tests can assert per-surface headers without going through
 // the JSON envelope.
+//
+// The Anthropic-Beta header is wholesale-replaced with the surface's exact token
+// set (11 for cli, 10 for sdk-cli) to match the real CLI fingerprint. This
+// intentionally drops any client-requested betas outside the surface set (e.g.
+// structured-outputs, fast-mode). Features depending on those betas will not
+// work when mimicry is active — this is by design: the plugin's goal is
+// fingerprint fidelity, not feature passthrough.
 func buildEgressHeaderResponse(profile SurfaceProfile) pluginapi.EgressHeaderInterceptResponse {
 	return pluginapi.EgressHeaderInterceptResponse{
 		Headers: http.Header{
@@ -66,5 +81,6 @@ func buildEgressHeaderResponse(profile SurfaceProfile) pluginapi.EgressHeaderInt
 			"Anthropic-Dangerous-Direct-Browser-Access": {anthropicBrowserAccess},
 			"X-App": {xAppValue},
 		},
+		ClearHeaders: headersToStrip,
 	}
 }

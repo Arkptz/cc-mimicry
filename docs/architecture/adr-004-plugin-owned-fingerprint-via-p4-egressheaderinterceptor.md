@@ -1,5 +1,5 @@
 ---
-author: ''
+author: arkptz
 code_paths:
 - internal/mimicry/surface.go
 - internal/mimicry/egress_headers.go
