@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+	"github.com/tidwall/gjson"
 )
 
 // rewriteStore carries the per-request tool-name rewrite map from the request
@@ -22,6 +23,10 @@ var rewriteStore = newBoundedRewriteStore(2048)
 // interceptRequestBefore applies the full forward mimicry before credential
 // selection. This is the only forward hook we use; it runs on the Anthropic
 // source format only.
+//
+// Header-side fingerprint (user-agent, x-stainless-*, anthropic-beta) is NOT
+// applied here — that is the responsibility of the egress header hook (P4) which
+// runs post-auth. On the body path we only rewrite the request body.
 func interceptRequestBefore(raw []byte) ([]byte, error) {
 	var req pluginapi.RequestInterceptRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
@@ -33,32 +38,27 @@ func interceptRequestBefore(raw []byte) ([]byte, error) {
 		return okEnvelope(pluginapi.RequestInterceptResponse{})
 	}
 
-	var headerOverrides http.Header
-	var clearHeaders []string
-	if cfg.NormalizeHeaders {
-		headerOverrides, clearHeaders = claudeCodeHeaderOverrides(req.Headers)
+	// Defensive guard: count_tokens payloads have no `messages` key. Skip the
+	// body transform entirely so the plugin does not emit a billing block on a
+	// non-/v1/messages call.
+	if !gjson.GetBytes(req.Body, "messages").Exists() {
+		return okEnvelope(pluginapi.RequestInterceptResponse{})
 	}
 
-	// The effective anthropic-beta is what we actually send: our override when
-	// normalizing, otherwise the client's incoming header. context_management is
-	// only valid when that header carries the context-management token.
+	// The effective anthropic-beta is what the client sent; context_management
+	// is only valid when that header carries the context-management token.
+	// (Header override lives in the P4 egress hook and does not run here.)
 	effectiveBeta := headerValue(req.Headers, "anthropic-beta")
-	if headerOverrides != nil {
-		if v := headerOverrides.Get("anthropic-beta"); v != "" {
-			effectiveBeta = v
-		}
-	}
 	contextMgmtEnabled := betaTokensContain(effectiveBeta, anthropicBetaContextManagementToken)
 
-	newBody, rw := applyRequestMimicry(req.Body, cfg, contextMgmtEnabled)
+	profile := resolveSurface(cfg.Surface)
+	newBody, rw := applyRequestMimicry(req.Body, cfg, profile, contextMgmtEnabled)
 	newBody = stripContextManagementIfUnsupported(newBody, contextMgmtEnabled)
 
 	resp := pluginapi.RequestInterceptResponse{}
 	if len(newBody) > 0 && !bytesEqual(newBody, req.Body) {
 		resp.Body = newBody
 	}
-	resp.Headers = headerOverrides
-	resp.ClearHeaders = clearHeaders
 
 	if cfg.ObfuscateToolNames && !rw.empty() {
 		rewriteStore.put(requestSignature(newBody, req.Headers), rw)
@@ -131,38 +131,6 @@ func isAnthropicClaudeRequest(sourceFormat string, body []byte) bool {
 	default:
 		return false
 	}
-}
-
-// claudeCodeHeaderOverrides returns the header replacements and header removals
-// needed to look like the Claude Code CLI. It only sets values; the host merges
-// these over the current request headers (ClearHeaders removes first).
-func claudeCodeHeaderOverrides(current http.Header) (http.Header, []string) {
-	out := http.Header{}
-	out.Set("user-agent", claudeCodeUserAgent)
-	out.Set("x-app", "cli")
-	out.Set("anthropic-version", "2023-06-01")
-	out.Set("anthropic-beta", mergeClaudeCodeBeta(headerValue(current, "anthropic-beta")))
-	out.Set("x-stainless-lang", "js")
-	out.Set("x-stainless-package-version", "0.60.0")
-	out.Set("x-stainless-os", "Linux")
-	out.Set("x-stainless-arch", "x64")
-	out.Set("x-stainless-runtime", "node")
-	out.Set("x-stainless-runtime-version", "v22.11.0")
-
-	// Remove client SDK fingerprints that would contradict the CLI identity.
-	stripped := []string{"x-stainless-retry-count", "x-stainless-timeout", "x-stainless-helper-method"}
-	return out, stripped
-}
-
-// mergeClaudeCodeBeta builds the CLI beta header, preserving the client's
-// context-management token when present so we never silently strip a caller's
-// legitimate context_management capability.
-func mergeClaudeCodeBeta(clientBeta string) string {
-	tokens := append([]string(nil), claudeCodeBetas...)
-	if betaTokensContain(clientBeta, anthropicBetaContextManagementToken) {
-		tokens = append(tokens, anthropicBetaContextManagementToken)
-	}
-	return strings.Join(tokens, ",")
 }
 
 // headerValue returns the first value for key, tolerating a nil header.

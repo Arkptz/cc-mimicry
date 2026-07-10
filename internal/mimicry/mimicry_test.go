@@ -143,31 +143,72 @@ func TestStaticReverseIsUnconditional(t *testing.T) {
 	}
 }
 
-func TestSystemRewriteThreeBlocks(t *testing.T) {
-	body := []byte(`{"model":"claude-sonnet-4","system":"Be helpful.","messages":[{"role":"user","content":"hi"}]}`)
-	out := rewriteSystemForClaudeCode(body, defaultConfig())
-	sys := gjson.GetBytes(out, "system")
-	if !sys.IsArray() || len(sys.Array()) != 3 {
-		t.Fatalf("expected 3 system blocks, got: %s", sys.Raw)
-	}
-	if !strings.Contains(sys.Array()[1].Get("text").String(), "You are Claude Code") {
-		t.Fatalf("missing identity block: %s", sys.Raw)
-	}
-	if sys.Array()[2].Get("cache_control.type").String() != "ephemeral" {
-		t.Fatalf("expected cache breakpoint on last block: %s", sys.Raw)
-	}
-	// Original system relocated into messages head.
-	first := gjson.GetBytes(out, "messages.0")
-	if first.Get("role").String() != "user" || !strings.Contains(first.Get("content.0.text").String(), "Be helpful.") {
-		t.Fatalf("original system not relocated into messages: %s", first.Raw)
+// TestSystemRewriteFourBlocks pins the 4-block surface-aware system[] output:
+// [0] billing block, [1] agent identity, [2] shared intro (cache_control global),
+// [3] TextOutputSection (cache_control), and the original system relocated into
+// messages head.
+func TestSystemRewriteFourBlocks(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		profile SurfaceProfile
+	}{
+		{"cli", CLISurface},
+		{"sdk-cli", SDKCLISurface},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(`{"model":"claude-sonnet-4","system":"Be helpful.","messages":[{"role":"user","content":"hi"}]}`)
+			out := rewriteSystemForClaudeCode(body, tc.profile)
+			sys := gjson.GetBytes(out, "system")
+			if !sys.IsArray() || len(sys.Array()) != 4 {
+				t.Fatalf("expected 4 system blocks, got: %s", sys.Raw)
+			}
+			billing := sys.Array()[0].Get("text").String()
+			if !strings.HasPrefix(billing, "x-anthropic-billing-header: cc_version=2.1.206.") {
+				t.Fatalf("[0] wrong billing prefix: %q", billing)
+			}
+			if !strings.Contains(billing, "cc_entrypoint="+tc.profile.Entrypoint+";") ||
+				!strings.Contains(billing, "cch=00000;") {
+				t.Fatalf("[0] wrong billing tail: %q", billing)
+			}
+			if sys.Array()[0].Get("cache_control").Exists() {
+				t.Fatalf("[0] must not have cache_control: %s", sys.Array()[0].Raw)
+			}
+			if got := sys.Array()[1].Get("text").String(); got != tc.profile.AgentIdentifier {
+				t.Fatalf("[1] agent identifier mismatch: %q vs %q", got, tc.profile.AgentIdentifier)
+			}
+			if sys.Array()[1].Get("cache_control").Exists() {
+				t.Fatalf("[1] must not have cache_control: %s", sys.Array()[1].Raw)
+			}
+			if sys.Array()[2].Get("cache_control.type").String() != "ephemeral" ||
+				sys.Array()[2].Get("cache_control.scope").String() != "global" {
+				t.Fatalf("[2] wrong cache_control: %s", sys.Array()[2].Raw)
+			}
+			if sys.Array()[3].Get("cache_control.type").String() != "ephemeral" ||
+				sys.Array()[3].Get("cache_control.scope").Exists() {
+				t.Fatalf("[3] wrong cache_control: %s", sys.Array()[3].Raw)
+			}
+			// Original system relocated into messages head.
+			first := gjson.GetBytes(out, "messages.0")
+			if first.Get("role").String() != "user" || !strings.Contains(first.Get("content.0.text").String(), "Be helpful.") {
+				t.Fatalf("original system not relocated into messages: %s", first.Raw)
+			}
+		})
 	}
 }
 
 func TestSystemRewriteSkipsExistingClaudeCode(t *testing.T) {
 	body := []byte(`{"system":"You are Claude Code, Anthropic's official CLI for Claude.","messages":[]}`)
-	out := rewriteSystemForClaudeCode(body, defaultConfig())
+	out := rewriteSystemForClaudeCode(body, CLISurface)
 	if gjson.GetBytes(out, "system").IsArray() {
-		t.Fatal("must not rewrap an already-Claude-Code system")
+		t.Fatal("must not rewrap an already-Claude-Code system (legacy identity)")
+	}
+}
+
+func TestSystemRewriteSkipsExistingSDKIdentity(t *testing.T) {
+	body := []byte(`{"system":"You are a Claude agent, built on Anthropic's Claude Agent SDK.","messages":[]}`)
+	out := rewriteSystemForClaudeCode(body, SDKCLISurface)
+	if gjson.GetBytes(out, "system").IsArray() {
+		t.Fatal("must not rewrap an already-sdk-agent system")
 	}
 }
 
@@ -211,17 +252,6 @@ func TestKeepContextManagementWhenSupported(t *testing.T) {
 	out := stripContextManagementIfUnsupported(body, true)
 	if !gjson.GetBytes(out, "context_management").Exists() {
 		t.Fatalf("context_management wrongly stripped when supported: %s", out)
-	}
-}
-
-func TestMergeClaudeCodeBetaPreservesContextManagement(t *testing.T) {
-	merged := mergeClaudeCodeBeta("context-management-2025-06-27,some-other")
-	if !betaTokensContain(merged, anthropicBetaContextManagementToken) {
-		t.Fatalf("client context-management token dropped: %s", merged)
-	}
-	absent := mergeClaudeCodeBeta("oauth-2025-04-20")
-	if betaTokensContain(absent, anthropicBetaContextManagementToken) {
-		t.Fatalf("context-management token wrongly added: %s", absent)
 	}
 }
 

@@ -1,6 +1,8 @@
 package mimicry
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -13,25 +15,22 @@ const (
 	// real Claude Code CLI ("1h").
 	defaultCacheControlTTL = "1h"
 
-	// claudeCodeSystemPrompt is the identity block the real CLI always sends.
-	claudeCodeSystemPrompt = "You are Claude Code, Anthropic's official CLI for Claude."
+	// cliTargetVersion is the impersonation target version. Real CLI captures
+	// used to derive the surface profiles were taken at exactly this version.
+	cliTargetVersion = "2.1.206"
 
-	// defaultSystemExpansion is a neutral expansion paragraph appended so the
-	// system block count/volume approaches the real CLI without polluting the
-	// proxied user's behavior with tool-specific instructions.
-	defaultSystemExpansion = "You are an interactive CLI tool that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user."
-
-	// claudeCodeUserAgent is the CLI user-agent fingerprint.
-	claudeCodeUserAgent = "claude-cli/2.1.92 (external, cli)"
+	// billingBuildhashSalt is the deterministic salt fed into sha256 to derive
+	// the placeholder "buildhash" segment of the billing block. CPA strips /
+	// re-signs the tail (cch=<hex>) regardless, and the buildhash algorithm the
+	// real CLI uses drifted for 2.1.206 (documented residual). Keeping the
+	// value deterministic (not random) is what the golden tests rely on.
+	billingBuildhashSalt = "cc-mimicry"
 )
 
-// claudeCodeBetas is the set of Claude Code beta flags the CLI sends.
-var claudeCodeBetas = []string{
-	"claude-code-20250219",
-	"oauth-2025-04-20",
-	"interleaved-thinking-2025-05-14",
-	"fine-grained-tool-streaming-2025-05-14",
-}
+// legacyClaudeCodeIdentityPrefix is the identifier the plugin's own prior
+// 3-block builder emitted. Kept purely to detect double-wrap on inbound requests
+// that already flowed through an older cc-mimicry instance.
+const legacyClaudeCodeIdentityPrefix = "You are Claude Code"
 
 // anthropicBetaContextManagementToken gates the context_management request field.
 const anthropicBetaContextManagementToken = "context-management-2025-06-27"
@@ -52,9 +51,12 @@ func betaTokensContain(header, token string) bool {
 
 // applyRequestMimicry runs the full forward transform pipeline on an Anthropic
 // /v1/messages request body. Order matters (mirrors sub2api transform_request):
-//  1. system rewrite (3-block + relocate original system into messages)
+//  1. system rewrite (4-block, surface-aware, + relocate original system into messages)
 //  2. fingerprint fill (temperature/max_tokens/context_management)
 //  3. tool-name obfuscation + last-tool cache breakpoint
+//
+// profile selects which SurfaceProfile drives system[1]/system[3]. When
+// InjectSystemPrompt is disabled the profile is unused.
 //
 // contextMgmtEnabled reports whether the effective anthropic-beta header carries
 // the context-management token, which gates the context_management field
@@ -62,13 +64,13 @@ func betaTokensContain(header, token string) bool {
 //
 // The tool rewrite map is returned so the caller can stash it for the reverse
 // pass. rw is nil when nothing was renamed.
-func applyRequestMimicry(body []byte, cfg pluginConfig, contextMgmtEnabled bool) ([]byte, *toolNameRewrite) {
+func applyRequestMimicry(body []byte, cfg pluginConfig, profile SurfaceProfile, contextMgmtEnabled bool) ([]byte, *toolNameRewrite) {
 	if len(body) == 0 {
 		return body, nil
 	}
 
 	if cfg.InjectSystemPrompt {
-		body = rewriteSystemForClaudeCode(body, cfg)
+		body = rewriteSystemForClaudeCode(body, profile)
 	}
 	if cfg.FillFingerprint {
 		body = fillRequestFingerprint(body, contextMgmtEnabled)
@@ -84,29 +86,28 @@ func applyRequestMimicry(body []byte, cfg pluginConfig, contextMgmtEnabled bool)
 	return body, rw
 }
 
-// rewriteSystemForClaudeCode rebuilds system into the CLI's 3-block form and
-// relocates the original system prompt into a user/assistant message pair.
+// rewriteSystemForClaudeCode rebuilds system into the CLI 2.1.206 4-block form
+// and relocates the original system prompt into a user/assistant message pair.
 //
-//	[0] billing attribution block (cc_entrypoint=cli; billing marker)
-//	[1] "You are Claude Code..." identity block
-//	[2] neutral expansion block with a cache_control breakpoint
+//	[0] billing attribution block
+//	    (x-anthropic-billing-header: cc_version=<ver>.<buildhash>; cc_entrypoint=<surface>; cch=00000;)
+//	[1] surface AgentIdentifier (no cache_control)
+//	[2] shared intro/security/System/DoingTasks/Tone bundle
+//	    (cache_control ephemeral 1h, scope: "global")
+//	[3] surface TextOutputSection (cache_control ephemeral 1h)
 //
-// If the system already looks like Claude Code (identity prefix present) it is
-// left untouched — we must not double-wrap.
-func rewriteSystemForClaudeCode(body []byte, cfg pluginConfig) []byte {
+// If the system already looks like Claude Code or the current surface's agent
+// identifier is already present, the request is left untouched — we must not
+// double-wrap.
+func rewriteSystemForClaudeCode(body []byte, profile SurfaceProfile) []byte {
 	systemResult := gjson.GetBytes(body, "system")
 	originalSystemText := extractSystemText(systemResult)
 
-	if hasClaudeCodePrefix(originalSystemText) {
+	if hasClaudeCodePrefix(originalSystemText, profile) {
 		return body
 	}
 
-	expansion := cfg.SystemExpansion
-	if strings.TrimSpace(expansion) == "" {
-		expansion = defaultSystemExpansion
-	}
-
-	blocks := buildClaudeCodeSystemBlocks(expansion)
+	blocks := buildClaudeCodeSystemBlocks(profile)
 	next, err := sjson.SetRawBytes(body, "system", blocks)
 	if err != nil {
 		return body
@@ -115,8 +116,7 @@ func rewriteSystemForClaudeCode(body []byte, cfg pluginConfig) []byte {
 
 	// Relocate the original system prompt into the message history so the model
 	// still receives the user's instructions.
-	ccTrimmed := strings.TrimSpace(claudeCodeSystemPrompt)
-	if originalSystemText != "" && originalSystemText != ccTrimmed {
+	if originalSystemText != "" && originalSystemText != strings.TrimSpace(profile.AgentIdentifier) {
 		body = prependSystemAsMessages(body, originalSystemText)
 	}
 	return body
@@ -143,32 +143,60 @@ func extractSystemText(system gjson.Result) string {
 	return ""
 }
 
-func hasClaudeCodePrefix(text string) bool {
-	return strings.HasPrefix(strings.TrimSpace(text), "You are Claude Code")
+// hasClaudeCodePrefix reports whether text looks like a system prompt that has
+// already been rewritten by cc-mimicry (this run or a prior one). We accept the
+// legacy 3-block identity prefix ("You are Claude Code") and the current
+// surface's exact agent identifier.
+func hasClaudeCodePrefix(text string, profile SurfaceProfile) bool {
+	t := strings.TrimSpace(text)
+	if t == "" {
+		return false
+	}
+	if strings.HasPrefix(t, legacyClaudeCodeIdentityPrefix) {
+		return true
+	}
+	return strings.HasPrefix(t, strings.TrimSpace(profile.AgentIdentifier))
 }
 
-// buildClaudeCodeSystemBlocks returns the raw JSON array for the 3-block system.
-func buildClaudeCodeSystemBlocks(expansion string) []byte {
-	billing := fmt.Sprintf("cc_version=%s; cc_entrypoint=cli;", cliVersion())
-	// [2] carries the ephemeral cache breakpoint (stable cache prefix).
-	// Errors are discarded: appending a well-formed block to the constant `[]`
+// buildClaudeCodeSystemBlocks returns the raw JSON array for the 4-block system.
+// The cch=00000 tail on block[0] is a PLACEHOLDER: CPA's signAnthropicMessagesBody
+// pattern-matches "cch=<5hex>" and rewrites it with the real xxHash64 downstream.
+func buildClaudeCodeSystemBlocks(profile SurfaceProfile) []byte {
+	billing := fmt.Sprintf(
+		"x-anthropic-billing-header: cc_version=%s.%s; cc_entrypoint=%s; cch=00000;",
+		cliTargetVersion,
+		billingBuildhash(cliTargetVersion, profile.Entrypoint),
+		profile.Entrypoint,
+	)
+
+	// Errors are discarded: appending well-formed blocks to the constant `[]`
 	// scaffold via sjson cannot fail for these fixed paths and valid JSON inputs.
 	arr := `[]`
-	arr, _ = sjsonSetRawString(arr, "-1", jsonTextBlock(billing, false))
-	arr, _ = sjsonSetRawString(arr, "-1", jsonTextBlock(claudeCodeSystemPrompt, false))
-	arr, _ = sjsonSetRawString(arr, "-1", jsonTextBlock(expansion, true))
+	arr, _ = sjson.SetRaw(arr, "-1", jsonTextBlockRaw(billing, ""))
+	arr, _ = sjson.SetRaw(arr, "-1", jsonTextBlockRaw(profile.AgentIdentifier, ""))
+	arr, _ = sjson.SetRaw(arr, "-1", jsonTextBlockRaw(sharedSystemIntro, `{"type":"ephemeral","ttl":"1h","scope":"global"}`))
+	arr, _ = sjson.SetRaw(arr, "-1", jsonTextBlockRaw(profile.TextOutputSection, `{"type":"ephemeral","ttl":"1h"}`))
 	return []byte(arr)
 }
 
-// jsonTextBlock builds one Anthropic system text block, optionally with an
-// ephemeral cache_control breakpoint.
-func jsonTextBlock(text string, withCache bool) string {
+// billingBuildhash derives the deterministic 3-hex placeholder for the
+// cc_version.<buildhash> segment. The real CLI's buildhash algorithm drifted
+// for 2.1.206 (documented residual, U3) and CPA strips this segment in CI
+// anyway, so a stable derivation is what the golden tests need.
+func billingBuildhash(version, entrypoint string) string {
+	sum := sha256.Sum256([]byte(billingBuildhashSalt + ":" + version + ":" + entrypoint))
+	return hex.EncodeToString(sum[:])[:3]
+}
+
+// jsonTextBlockRaw builds one Anthropic system text block. cacheControlRaw is
+// the literal JSON object for cache_control, or "" to omit the field.
+func jsonTextBlockRaw(text, cacheControlRaw string) string {
 	block := `{"type":"text"}`
 	// Errors discarded: sjson.SetRaw on the constant `{"type":"text"}` scaffold
 	// with a valid raw JSON value cannot fail for these fixed paths.
 	block, _ = sjson.SetRaw(block, "text", jsonString(text))
-	if withCache {
-		block, _ = sjson.SetRaw(block, "cache_control", fmt.Sprintf(`{"type":"ephemeral","ttl":%q}`, defaultCacheControlTTL))
+	if cacheControlRaw != "" {
+		block, _ = sjson.SetRaw(block, "cache_control", cacheControlRaw)
 	}
 	return block
 }
@@ -242,13 +270,6 @@ func stripContextManagementIfUnsupported(body []byte, contextMgmtEnabled bool) [
 		return next
 	}
 	return body
-}
-
-func cliVersion() string { return "2.1.92" }
-
-// sjsonSetRawString appends a raw JSON value to an array at path "-1".
-func sjsonSetRawString(arr, path, raw string) (string, error) {
-	return sjson.SetRaw(arr, path, raw)
 }
 
 // jsonString safely JSON-encodes a string (with surrounding quotes).

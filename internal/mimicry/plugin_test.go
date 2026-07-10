@@ -59,7 +59,7 @@ func TestHandleRegisterReturnsCapabilities(t *testing.T) {
 }
 
 func TestHandleReconfigureAppliesConfig(t *testing.T) {
-	raw, _ := json.Marshal(lifecycleRequest{ConfigYAML: []byte("normalize_headers: false\n")})
+	raw, _ := json.Marshal(lifecycleRequest{ConfigYAML: []byte("surface: sdk-cli\n")})
 	out, err := Handle(pluginabi.MethodPluginReconfigure, raw)
 	if err != nil {
 		t.Fatalf("reconfigure: %v", err)
@@ -67,8 +67,8 @@ func TestHandleReconfigureAppliesConfig(t *testing.T) {
 	if !strings.Contains(string(out), `"ok":true`) {
 		t.Fatalf("reconfigure not ok: %s", out)
 	}
-	if currentConfig().NormalizeHeaders {
-		t.Fatal("reconfigure did not apply normalize_headers=false")
+	if currentConfig().Surface != "sdk-cli" {
+		t.Fatal("reconfigure did not apply surface=sdk-cli")
 	}
 	t.Cleanup(func() { _ = configure(nil) })
 }

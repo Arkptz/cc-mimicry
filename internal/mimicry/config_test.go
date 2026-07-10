@@ -24,11 +24,13 @@ func TestConfigureDefaultsAllOn(t *testing.T) {
 		"inject_system_prompt": cfg.InjectSystemPrompt,
 		"cache_breakpoints":    cfg.CacheBreakpoints,
 		"fill_fingerprint":     cfg.FillFingerprint,
-		"normalize_headers":    cfg.NormalizeHeaders,
 	} {
 		if !got {
 			t.Fatalf("default %s = false, want true", name)
 		}
+	}
+	if cfg.Surface != "cli" {
+		t.Fatalf("default surface = %q, want %q", cfg.Surface, "cli")
 	}
 }
 
@@ -42,8 +44,11 @@ func TestConfigureOmittedKeyStaysDefaultTrue(t *testing.T) {
 	if cfg.ObfuscateToolNames {
 		t.Fatal("obfuscate_tool_names should be false")
 	}
-	if !cfg.InjectSystemPrompt || !cfg.CacheBreakpoints || !cfg.FillFingerprint || !cfg.NormalizeHeaders {
+	if !cfg.InjectSystemPrompt || !cfg.CacheBreakpoints || !cfg.FillFingerprint {
 		t.Fatalf("omitted keys were zeroed instead of staying default-true: %+v", cfg)
+	}
+	if cfg.Surface != "cli" {
+		t.Fatalf("omitted surface should default to cli, got %q", cfg.Surface)
 	}
 	// Restore defaults so this test's global mutation cannot leak under -shuffle.
 	t.Cleanup(func() { _ = configure(nil) })
@@ -54,28 +59,38 @@ func TestConfigureAllDisabled(t *testing.T) {
 inject_system_prompt: false
 cache_breakpoints: false
 fill_fingerprint: false
-normalize_headers: false
 `)
 	if err := configure(raw); err != nil {
 		t.Fatalf("configure: %v", err)
 	}
 	cfg := currentConfig()
-	if cfg.ObfuscateToolNames || cfg.InjectSystemPrompt || cfg.CacheBreakpoints || cfg.FillFingerprint || cfg.NormalizeHeaders {
+	if cfg.ObfuscateToolNames || cfg.InjectSystemPrompt || cfg.CacheBreakpoints || cfg.FillFingerprint {
 		t.Fatalf("all-disabled config not applied: %+v", cfg)
 	}
 	// Restore defaults so later tests in this package are not polluted.
 	t.Cleanup(func() { _ = configure(nil) })
 }
 
-func TestConfigureSystemExpansionOverride(t *testing.T) {
-	raw := lifecyclePayload(t, "system_expansion: \"custom expansion\"\n")
-	if err := configure(raw); err != nil {
-		t.Fatalf("configure: %v", err)
+func TestConfigureSurfaceSelects(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{"cli explicit", "surface: cli\n", "cli"},
+		{"sdk explicit", "surface: sdk-cli\n", "sdk-cli"},
+		{"empty falls back to cli", "surface: \"\"\n", "cli"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := configure(lifecyclePayload(t, tc.yaml)); err != nil {
+				t.Fatalf("configure: %v", err)
+			}
+			if got := currentConfig().Surface; got != tc.want {
+				t.Fatalf("surface = %q, want %q", got, tc.want)
+			}
+			t.Cleanup(func() { _ = configure(nil) })
+		})
 	}
-	if got := currentConfig().SystemExpansion; got != "custom expansion" {
-		t.Fatalf("system_expansion = %q, want %q", got, "custom expansion")
-	}
-	t.Cleanup(func() { _ = configure(nil) })
 }
 
 func TestConfigureRejectsBadLifecycleJSON(t *testing.T) {
@@ -110,7 +125,7 @@ func TestConfigFieldsCoverEveryToggle(t *testing.T) {
 		"inject_system_prompt": false,
 		"cache_breakpoints":    false,
 		"fill_fingerprint":     false,
-		"normalize_headers":    false,
+		"surface":              false,
 		"system_expansion":     false,
 	}
 	for _, f := range fields {

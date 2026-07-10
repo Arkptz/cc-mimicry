@@ -14,4 +14,4 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 )
 
-replace github.com/router-for-me/CLIProxyAPI/v7 => ../CLIProxyAPI
+replace github.com/router-for-me/CLIProxyAPI/v7 => ../forks/CLIProxyAPI

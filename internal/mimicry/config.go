@@ -14,7 +14,7 @@ type pluginConfig struct {
 	// ObfuscateToolNames toggles the static+dynamic tool-name rename (and its
 	// reverse on responses/stream chunks). Default true.
 	ObfuscateToolNames bool `yaml:"obfuscate_tool_names"`
-	// InjectSystemPrompt toggles the Claude Code 3-block system prompt rewrite.
+	// InjectSystemPrompt toggles the Claude Code 4-block system prompt rewrite.
 	// Default true.
 	InjectSystemPrompt bool `yaml:"inject_system_prompt"`
 	// CacheBreakpoints toggles the ephemeral cache_control breakpoint on the last
@@ -23,10 +23,12 @@ type pluginConfig struct {
 	// FillFingerprint toggles request-body fingerprint fill (temperature,
 	// max_tokens, context_management). Default true.
 	FillFingerprint bool `yaml:"fill_fingerprint"`
-	// NormalizeHeaders toggles Claude Code request header normalization. Default true.
-	NormalizeHeaders bool `yaml:"normalize_headers"`
-	// SystemExpansion overrides the neutral system-prompt expansion block text.
-	// Empty uses the built-in default.
+	// Surface selects the CLI entrypoint fingerprint to impersonate.
+	// Valid: "cli" (interactive TUI, default) or "sdk-cli" (-p / print).
+	Surface string `yaml:"surface"`
+	// SystemExpansion is retained for backwards-compat with older configs but
+	// is unused on the 4-block surface-aware path (system[3] is sourced from the
+	// resolved SurfaceProfile). Empty is the norm.
 	SystemExpansion string `yaml:"system_expansion"`
 }
 
@@ -36,7 +38,7 @@ func defaultConfig() pluginConfig {
 		InjectSystemPrompt: true,
 		CacheBreakpoints:   true,
 		FillFingerprint:    true,
-		NormalizeHeaders:   true,
+		Surface:            "cli",
 	}
 }
 
@@ -68,6 +70,9 @@ func configure(raw []byte) error {
 			}
 		}
 	}
+	if cfg.Surface == "" {
+		cfg.Surface = "cli"
+	}
 	cfgMu.Lock()
 	activeCfg = cfg
 	cfgMu.Unlock()
@@ -89,10 +94,14 @@ func decodeConfigYAML(configYAML []byte, cfg *pluginConfig) error {
 		{"inject_system_prompt", &cfg.InjectSystemPrompt},
 		{"cache_breakpoints", &cfg.CacheBreakpoints},
 		{"fill_fingerprint", &cfg.FillFingerprint},
-		{"normalize_headers", &cfg.NormalizeHeaders},
 	} {
 		if err := decodeBool(probe, f.key, f.dst); err != nil {
 			return fmt.Errorf("config key %q: %w", f.key, err)
+		}
+	}
+	if node, ok := probe["surface"]; ok {
+		if err := node.Decode(&cfg.Surface); err != nil {
+			return fmt.Errorf("config key %q: %w", "surface", err)
 		}
 	}
 	if node, ok := probe["system_expansion"]; ok {
@@ -117,10 +126,10 @@ func decodeBool(m map[string]yaml.Node, key string, dst *bool) error {
 func configFields() []pluginapi.ConfigField {
 	return []pluginapi.ConfigField{
 		{Name: "obfuscate_tool_names", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Rename tool names to Claude-Code-like aliases (reversed on responses)."},
-		{Name: "inject_system_prompt", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Rewrite system into the Claude Code 3-block form; relocate original system into messages."},
+		{Name: "inject_system_prompt", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Rewrite system into the Claude Code 4-block form; relocate original system into messages."},
 		{Name: "cache_breakpoints", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Inject an ephemeral cache_control breakpoint on the last tool."},
 		{Name: "fill_fingerprint", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Fill temperature/max_tokens/context_management to match the real CLI payload."},
-		{Name: "normalize_headers", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Normalize request headers to Claude Code CLI values (user-agent, anthropic-beta, x-app, x-stainless-*)."},
-		{Name: "system_expansion", Type: pluginapi.ConfigFieldTypeString, Description: "Override the neutral system-prompt expansion block text."},
+		{Name: "surface", Type: pluginapi.ConfigFieldTypeString, Description: "CLI entrypoint to impersonate: \"cli\" (interactive TUI, default) or \"sdk-cli\" (-p / print)."},
+		{Name: "system_expansion", Type: pluginapi.ConfigFieldTypeString, Description: "Deprecated: unused on the 4-block surface path. Retained for backwards-compat."},
 	}
 }

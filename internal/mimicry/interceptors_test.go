@@ -75,11 +75,14 @@ func TestInterceptRequestBeforeSkipsNonAnthropic(t *testing.T) {
 	}
 }
 
-func TestInterceptRequestBeforeSetsHeaderOverrides(t *testing.T) {
+// TestInterceptRequestBeforeSkipsCountTokens pins the defensive guard: a
+// count_tokens payload has no `messages` key and must NOT get a billing block
+// emitted (billing only makes sense on /v1/messages).
+func TestInterceptRequestBeforeSkipsCountTokens(t *testing.T) {
 	_ = configure(nil)
 	req := pluginapi.RequestInterceptRequest{
 		SourceFormat: "claude",
-		Body:         []byte(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"hi"}]}`),
+		Body:         []byte(`{"model":"claude-sonnet-4","system":"hi"}`),
 		Headers:      http.Header{},
 	}
 	raw, _ := json.Marshal(req)
@@ -89,11 +92,78 @@ func TestInterceptRequestBeforeSetsHeaderOverrides(t *testing.T) {
 	}
 	var resp pluginapi.RequestInterceptResponse
 	decodeEnvelopeResult(t, out, &resp)
-	if resp.Headers.Get("user-agent") != claudeCodeUserAgent {
-		t.Fatalf("user-agent not normalized: %q", resp.Headers.Get("user-agent"))
+	if len(resp.Body) != 0 {
+		t.Fatalf("count_tokens payload was rewritten: %s", resp.Body)
 	}
-	if resp.Headers.Get("x-app") != "cli" {
-		t.Fatal("x-app not set to cli")
+}
+
+// TestInterceptRequestBeforeEmitsSurfaceBillingBlock pins the body path: the
+// forward interceptor rewrites system[] into the 4-block form with a billing
+// header that carries the configured surface's entrypoint.
+func TestInterceptRequestBeforeEmitsSurfaceBillingBlock(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		yaml      string
+		wantEntry string
+		wantAgent string
+	}{
+		{"cli default", "", "cli", CLISurface.AgentIdentifier},
+		{"sdk-cli explicit", "surface: sdk-cli\n", "sdk-cli", SDKCLISurface.AgentIdentifier},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.yaml == "" {
+				_ = configure(nil)
+			} else {
+				raw, _ := json.Marshal(lifecycleRequest{ConfigYAML: []byte(tc.yaml)})
+				if err := configure(raw); err != nil {
+					t.Fatalf("configure: %v", err)
+				}
+			}
+			t.Cleanup(func() { _ = configure(nil) })
+
+			req := pluginapi.RequestInterceptRequest{
+				SourceFormat: "claude",
+				Body:         []byte(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"hi"}]}`),
+				Headers:      http.Header{},
+			}
+			raw, _ := json.Marshal(req)
+			out, err := interceptRequestBefore(raw)
+			if err != nil {
+				t.Fatalf("interceptRequestBefore: %v", err)
+			}
+			var resp pluginapi.RequestInterceptResponse
+			decodeEnvelopeResult(t, out, &resp)
+			if len(resp.Body) == 0 {
+				t.Fatal("body was not rewritten")
+			}
+			// Header overrides live in the P4 egress hook now — this path must NOT
+			// return any Headers/ClearHeaders on the body interceptor response.
+			if resp.Headers != nil {
+				t.Fatalf("body interceptor must not set headers: %+v", resp.Headers)
+			}
+			if resp.ClearHeaders != nil {
+				t.Fatalf("body interceptor must not clear headers: %+v", resp.ClearHeaders)
+			}
+
+			sys := gjson.GetBytes(resp.Body, "system")
+			if !sys.IsArray() || len(sys.Array()) != 4 {
+				t.Fatalf("expected 4 system blocks, got: %s", sys.Raw)
+			}
+			billing := sys.Array()[0].Get("text").String()
+			wantPrefix := "x-anthropic-billing-header: cc_version=2.1.206."
+			if !strings.HasPrefix(billing, wantPrefix) {
+				t.Fatalf("billing block missing prefix: %q", billing)
+			}
+			if !strings.Contains(billing, "cc_entrypoint="+tc.wantEntry+";") {
+				t.Fatalf("billing block wrong entrypoint: %q (want %q)", billing, tc.wantEntry)
+			}
+			if !strings.Contains(billing, "cch=00000;") {
+				t.Fatalf("billing block missing cch placeholder: %q", billing)
+			}
+			if agent := sys.Array()[1].Get("text").String(); agent != tc.wantAgent {
+				t.Fatalf("agent identifier wrong: got %q want %q", agent, tc.wantAgent)
+			}
+		})
 	}
 }
 
@@ -254,16 +324,5 @@ func TestBoundedRewriteStoreIgnoresEmpty(t *testing.T) {
 	}
 	if store.get("k") != nil {
 		t.Fatal("empty rewrite must not be stored")
-	}
-}
-
-func TestClaudeCodeHeaderOverridesPreservesContextManagementBeta(t *testing.T) {
-	in := http.Header{"Anthropic-Beta": []string{anthropicBetaContextManagementToken}}
-	out, cleared := claudeCodeHeaderOverrides(in)
-	if !betaTokensContain(out.Get("anthropic-beta"), anthropicBetaContextManagementToken) {
-		t.Fatal("client context-management beta token was dropped")
-	}
-	if len(cleared) == 0 {
-		t.Fatal("expected x-stainless-* headers to be cleared")
 	}
 }

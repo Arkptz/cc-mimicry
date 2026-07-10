@@ -57,7 +57,7 @@ jobs:
       - name: Compute GitOps tag
         id: gitops
         run: |
-          BRANCH=$(echo "$GITHUB_REF_NAME" | tr -c '[:alnum:]._-' '-' | cut -c1-64)
+          BRANCH=$(printf '%s' "$GITHUB_REF_NAME" | tr -c '[:alnum:]._-' '-' | cut -c1-64)
           SHORT_SHA="${GITHUB_SHA:0:7}"
           TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
           echo "gitops_tag=${BRANCH}-${SHORT_SHA}-${TIMESTAMP}" >> "$GITHUB_OUTPUT"
@@ -140,11 +140,12 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
-          IMAGE_REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_REPO=$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')
           gh release create "$TAG" \
-            --repo "${{ github.repository }}" \
+            --repo "$REPO" \
             --title "$TAG" \
             --generate-notes \
             --notes "Plugin image: \`ghcr.io/${IMAGE_REPO}:${TAG#v}\` (\`/plugin/cc-mimicry.so\`). CPA SDK: \`$(cat .cpa-version)\`."

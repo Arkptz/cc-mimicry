@@ -1,0 +1,38 @@
+{
+  "_note": "REAL Claude Code CLI 2.1.206 interactive OAuth /v1/messages fingerprint. Captured via mitmproxy. Secrets stripped.",
+  "_source": "native ELF /tmp/cc-cli-2.1.206/package/claude, OAuth (clauberus pool acct), 2026-07-10",
+  "url": "https://api.anthropic.com/v1/messages",
+  "headers": {
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+    "User-Agent": "claude-cli/2.1.206 (external, sdk-cli)",
+    "X-Stainless-Arch": "x64",
+    "X-Stainless-Lang": "js",
+    "X-Stainless-OS": "Linux",
+    "X-Stainless-Package-Version": "0.94.0",
+    "X-Stainless-Retry-Count": "0",
+    "X-Stainless-Runtime": "node",
+    "X-Stainless-Runtime-Version": "v26.3.0",
+    "X-Stainless-Timeout": "600",
+    "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advisor-tool-2026-03-01,advanced-tool-use-2025-11-20,extended-cache-ttl-2025-04-11,cache-diagnosis-2026-04-07",
+    "anthropic-dangerous-direct-browser-access": "true",
+    "anthropic-version": "2023-06-01",
+    "x-app": "cli",
+    "Connection": "keep-alive",
+    "Host": "api.anthropic.com",
+    "Accept-Encoding": "gzip, deflate, br, zstd",
+    "Content-Length": "97935"
+  },
+  "anthropic_beta_list": [
+    "claude-code-20250219",
+    "oauth-2025-04-20",
+    "interleaved-thinking-2025-05-14",
+    "thinking-token-count-2026-05-13",
+    "context-management-2025-06-27",
+    "prompt-caching-scope-2026-01-05",
+    "advisor-tool-2026-03-01",
+    "advanced-tool-use-2025-11-20",
+    "extended-cache-ttl-2025-04-11",
+    "cache-diagnosis-2026-04-07"
+  ]
+}

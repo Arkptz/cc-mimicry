@@ -1,0 +1,749 @@
+name: Nightly fingerprint drift check
+
+# Two independent surfaces, two independent checks:
+#
+#   CHECK 1 (binary-strings): cheap early warning. Downloads the latest
+#   @anthropic-ai/claude-code tarball from the npm registry, verifies its
+#   sha512 against the registry metadata, extracts the ELF and greps its
+#   `strings` output for UA / version / beta patterns. NEVER executes the
+#   binary. Runs first as a fast gate.
+#
+#   CHECK 2 (wire-capture): authoritative. Only runs AFTER the sha512 gate
+#   has passed. Installs the binary, launches mitmdump, and drives BOTH
+#   surfaces with well-formed-but-invalid fake OAuth credentials:
+#     - sdk surface: `claude -p "..." --model ...`
+#     - cli surface: interactive TUI driven through a Python pty script.
+#   The remote server returns 401 — we don't care, we already captured the
+#   outbound request. Headers + system[0] billing prefix are normalized
+#   (dynamic fields stripped, betas ordered) and diffed against the
+#   committed baselines.
+#
+# If any of the three fingerprints drifts, a PR is opened via
+# peter-evans/create-pull-request. Raw mitmproxy flow files are NEVER
+# committed (they contain the full system prompt); only normalized
+# fingerprint JSON is committed.
+#
+# Runs on GitHub-hosted ephemeral runners — a fresh sandbox each night, no
+# real credentials in scope.
+
+on:
+  schedule:
+    # 02:17 UTC — offset from :00 to avoid the cron thundering herd.
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: fingerprint-nightly-${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  CLAUDE_PKG: '@anthropic-ai/claude-code'
+  NPM_REGISTRY: 'https://registry.npmjs.org'
+  # Fake, well-formed-but-invalid OAuth token. Shape passes the CLI's
+  # client-side check (expiresAt in the future); server returns 401 on use.
+  # No real credentials ever enter this workflow.
+  FAKE_ACCESS_TOKEN: 'sk-ant-oat01-CI-FAKE-NIGHTLY-PROBE'
+  FAKE_REFRESH_TOKEN: 'sk-ant-ort01-CI-FAKE'
+
+jobs:
+  # ---------------------------------------------------------------------
+  # CHECK 1: binary-strings. Cheap. Never executes the tarball.
+  # ---------------------------------------------------------------------
+  binary-strings:
+    name: CHECK 1 — binary strings
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      tarball-path: ${{ steps.download.outputs.tarball-path }}
+      version: ${{ steps.download.outputs.version }}
+      sha512-verified: ${{ steps.download.outputs.sha512-verified }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install file / binutils (strings)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends file binutils jq
+
+      - name: Fetch latest ${{ env.CLAUDE_PKG }} tarball + verify sha512
+        id: download
+        run: |
+          set -euo pipefail
+          mkdir -p _work/pkg
+          cd _work
+
+          # 1. Ask the registry for the latest version metadata.
+          curl -fsSL "${NPM_REGISTRY}/${CLAUDE_PKG}/latest" -o meta.json
+          VERSION=$(jq -r .version meta.json)
+          TARBALL_URL=$(jq -r .dist.tarball meta.json)
+          EXPECTED_INTEGRITY=$(jq -r .dist.integrity meta.json)
+          echo "version=$VERSION"
+          echo "tarball=$TARBALL_URL"
+          echo "expected_integrity=$EXPECTED_INTEGRITY"
+
+          # 2. Download the tarball.
+          curl -fsSL "$TARBALL_URL" -o pkg.tgz
+
+          # 3. Verify sha512. npm integrity is `sha512-<base64>`; we compute
+          #    the sha512 of the tarball and compare.
+          ALG=${EXPECTED_INTEGRITY%%-*}
+          EXPECTED_B64=${EXPECTED_INTEGRITY#*-}
+          if [ "$ALG" != "sha512" ]; then
+            echo "::error::unexpected integrity algorithm: $ALG"
+            exit 1
+          fi
+          ACTUAL_B64=$(openssl dgst -sha512 -binary pkg.tgz | base64 -w0)
+          if [ "$ACTUAL_B64" != "$EXPECTED_B64" ]; then
+            echo "::error::sha512 mismatch: registry=$EXPECTED_B64 actual=$ACTUAL_B64"
+            exit 1
+          fi
+          echo "sha512 OK"
+
+          # 4. Extract.
+          tar -xzf pkg.tgz -C pkg --strip-components=1
+
+          TARBALL_ABS="$(pwd)/pkg.tgz"
+          PKG_DIR="$(pwd)/pkg"
+          echo "tarball-path=$TARBALL_ABS" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha512-verified=true" >> "$GITHUB_OUTPUT"
+          echo "pkg-dir=$PKG_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Extract fingerprint (version / UA / beta tokens)
+        env:
+          PKG_DIR: ${{ steps.download.outputs.pkg-dir }}
+          PKG_VERSION: ${{ steps.download.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p _fp
+
+          # Find the packaged claude binary. Modern versions ship a native
+          # ELF at vendor/claude-code-* / cli.js is JS glue. We inspect the
+          # largest ELF we find under the package tree.
+          #
+          # `file` verifies each candidate is a real ELF; we pick the biggest.
+          ELF=""
+          BEST_SIZE=0
+          while IFS= read -r -d '' f; do
+            desc=$(file -b "$f")
+            case "$desc" in
+              ELF*) ;;
+              *) continue ;;
+            esac
+            sz=$(stat -c%s "$f")
+            if [ "$sz" -gt "$BEST_SIZE" ]; then
+              BEST_SIZE=$sz
+              ELF=$f
+            fi
+          done < <(find "$PKG_DIR" -type f -print0)
+
+          if [ -z "$ELF" ]; then
+            echo "::warning::no ELF found in tarball; falling back to cli.js strings"
+            # Fallback: grep JS glue. This still surfaces UA/beta drift for
+            # pure-JS releases.
+            ELF=$(find "$PKG_DIR" -type f -name '*.js' -printf '%s\t%p\n' \
+              | sort -nr | head -1 | cut -f2)
+          fi
+          echo "inspecting: $ELF"
+          file "$ELF"
+
+          # Run strings on both the binary and cli.js (belt-and-suspenders).
+          STRINGS_OUT=_fp/strings.txt
+          : > "$STRINGS_OUT"
+          strings -a "$ELF" >> "$STRINGS_OUT" || true
+          find "$PKG_DIR" -type f -name '*.js' -print0 \
+            | xargs -0 -r strings -a >> "$STRINGS_OUT" || true
+
+          # Extract UA pattern: `claude-cli/<ver> (<env>, <surface>)`
+          UA_PATTERN=$(grep -oE 'claude-cli/[0-9]+\.[0-9]+\.[0-9]+ \([^)]+\)' "$STRINGS_OUT" \
+            | sort -u | head -1 || true)
+
+          # Extract anthropic-beta tokens the binary knows about. We grep for
+          # the well-known beta names and any obvious `-2024-`/`-2025-`
+          # dated token. Sorted for stability.
+          BETAS_JSON=$(grep -oE '[a-z0-9][a-z0-9-]{4,}-(2024|2025|2026)-[0-9]{2}-[0-9]{2}' "$STRINGS_OUT" \
+            | sort -u \
+            | jq -Rn '[inputs]')
+          # Also capture common non-dated beta names.
+          NAMED_BETAS=$(grep -oE '(fine-grained-tool-streaming|prompt-caching|computer-use|token-efficient-tools|context-management|redact-thinking|extended-cache-ttl|files-api|structured-outputs|reasoning-effort)' "$STRINGS_OUT" \
+            | sort -u | jq -Rn '[inputs]')
+
+          # x-app values the binary references.
+          X_APP=$(grep -oE '(cli|sdk-cli|external)' "$STRINGS_OUT" \
+            | grep -E '^(cli|sdk-cli|external)$' \
+            | sort -u | jq -Rn '[inputs]')
+
+          jq -n --arg version "$PKG_VERSION" \
+                --arg ua "$UA_PATTERN" \
+                --argjson dated_betas "$BETAS_JSON" \
+                --argjson named_betas "$NAMED_BETAS" \
+                --argjson x_app "$X_APP" \
+                '{
+                  version: $version,
+                  user_agent_pattern: (if $ua == "" then null else $ua end),
+                  beta_tokens: (($dated_betas + $named_betas) | unique | sort),
+                  x_app_values: $x_app
+                }' \
+            | jq --sort-keys . > _fp/fingerprint-binary.json
+
+          echo "--- fingerprint-binary.json ---"
+          cat _fp/fingerprint-binary.json
+
+      - name: Upload fingerprint-binary + package artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fingerprint-binary
+          path: |
+            _fp/fingerprint-binary.json
+            _work/pkg.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Diff against baseline/fingerprint-binary.json
+        id: diff
+        run: |
+          set -euo pipefail
+          BASE=baseline/fingerprint-binary.json
+          NEW=_fp/fingerprint-binary.json
+          if [ ! -f "$BASE" ]; then
+            echo "no baseline yet — first run"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if diff -u <(jq --sort-keys . "$BASE") <(jq --sort-keys . "$NEW"); then
+            echo "no drift"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "drift detected"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stage new baseline
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p baseline
+          cp _fp/fingerprint-binary.json baseline/fingerprint-binary.json
+
+      - name: Open drift PR
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@67df31e08a133c670fd85cb2074aad51e32db8ee # v7.0.5
+        with:
+          branch: fingerprint-drift/binary
+          base: main
+          title: 'fingerprint(binary): drift detected (${{ steps.download.outputs.version }})'
+          commit-message: |
+            fingerprint(binary): update baseline to ${{ steps.download.outputs.version }}
+
+            Detected by nightly fingerprint-drift workflow (CHECK 1: binary
+            strings). The @anthropic-ai/claude-code tarball for this version
+            surfaced a UA / beta / x-app token set that differs from the
+            committed baseline. Review the diff and update surface logic in
+            cc-mimicry (internal/mimicry) accordingly.
+          body: |
+            Automated drift detection from `.github/workflows/fingerprint-nightly.yml`.
+
+            **Source**: sha512-verified tarball from `${{ env.NPM_REGISTRY }}`
+            **Version**: `${{ steps.download.outputs.version }}`
+            **Check**: CHECK 1 (binary strings — cheap, never executes the binary).
+
+            The `baseline/fingerprint-binary.json` was regenerated from
+            `strings` output on the packaged ELF (and JS glue as fallback).
+            Cross-check with CHECK 2 (`fingerprint-wire-*`) once its job
+            completes on the same run.
+          labels: |
+            fingerprint-drift
+            automated
+          delete-branch: true
+
+  # ---------------------------------------------------------------------
+  # CHECK 2: wire-capture. Authoritative. Executes the binary through
+  # mitmdump against a fake credential. sha512-gated: depends on CHECK 1
+  # having verified the tarball.
+  # ---------------------------------------------------------------------
+  wire-capture:
+    name: CHECK 2 — wire capture (${{ matrix.surface }})
+    needs: binary-strings
+    if: needs.binary-strings.outputs.sha512-verified == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - surface: sdk
+            port: 18091
+          - surface: cli
+            port: 18092
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Download sha512-verified tarball artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: fingerprint-binary
+          path: _dl
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '20'
+
+      - name: Install mitmproxy
+        run: |
+          python -m pip install --upgrade pip
+          pip install 'mitmproxy>=11,<13'
+          mitmdump --version
+
+      - name: Install claude-code from the verified tarball
+        id: install
+        env:
+          VERSION: ${{ needs.binary-strings.outputs.version }}
+        run: |
+          set -euo pipefail
+          # sha512 was already verified in job 1. We install from the same
+          # bytes (the artifact preserves them) to keep the gate meaningful.
+          npm install -g "_dl/pkg.tgz"
+          which claude
+          claude --version
+          echo "installed version: $VERSION"
+
+      - name: Prepare mitm CA + fake credentials
+        id: prep
+        env:
+          SURFACE: ${{ matrix.surface }}
+          PORT: ${{ matrix.port }}
+        run: |
+          set -euo pipefail
+          mkdir -p _mitm _work
+          # Boot mitmdump briefly to generate the CA cert.
+          mitmdump --listen-port "$PORT" --set confdir="$PWD/_mitm" -w /dev/null > _work/boot.log 2>&1 &
+          BOOTPID=$!
+          for _ in $(seq 1 30); do
+            if [ -f _mitm/mitmproxy-ca-cert.pem ]; then break; fi
+            sleep 0.5
+          done
+          kill "$BOOTPID" 2>/dev/null || true
+          wait "$BOOTPID" 2>/dev/null || true
+          test -f _mitm/mitmproxy-ca-cert.pem
+
+          # Fake credentials.json — shape-valid, expiresAt one year out.
+          EXPIRES=$(python -c 'import time; print(int((time.time()+31536000)*1000))')
+          CRED_DIR="$HOME/.config/claude"
+          mkdir -p "$CRED_DIR"
+          cat > "$CRED_DIR/credentials.json" <<JSON
+          {
+            "accessToken": "${{ env.FAKE_ACCESS_TOKEN }}",
+            "refreshToken": "${{ env.FAKE_REFRESH_TOKEN }}",
+            "expiresAt": $EXPIRES,
+            "scopes": ["user:inference", "user:profile"],
+            "subscriptionType": "pro"
+          }
+          JSON
+          echo "credentials at $CRED_DIR/credentials.json"
+
+          echo "ca=$PWD/_mitm/mitmproxy-ca-cert.pem" >> "$GITHUB_OUTPUT"
+
+      - name: Write pty TUI driver (cli surface)
+        if: matrix.surface == 'cli'
+        run: |
+          mkdir -p _scripts
+          cat > _scripts/drive_tui.py <<'PY'
+          """Drive the interactive claude TUI just far enough to emit ONE
+          outbound /v1/messages request, then die. mitmdump captures it.
+
+          Steps:
+            1. Fork a pty and exec `claude`.
+            2. Send Enter for any trust / onboarding dialog.
+            3. Type the prompt char-by-char (TUI swallows fast paste).
+            4. Send Enter to submit.
+            5. Wait for the request to hit the wire (bounded).
+            6. Send SIGTERM. Never SIGKILL — mitmdump needs the flush.
+          """
+          from __future__ import annotations
+          import os, pty, select, signal, sys, time
+
+          PROMPT = "ci fingerprint probe"
+          TOTAL_BUDGET = 25.0  # seconds
+
+          def main() -> int:
+              argv = ["claude"]
+              pid, fd = pty.fork()
+              if pid == 0:
+                  os.execvp(argv[0], argv)
+                  return 127
+
+              start = time.monotonic()
+              phase = "boot"
+              typed = False
+              submitted = False
+              buf = b""
+
+              try:
+                  while time.monotonic() - start < TOTAL_BUDGET:
+                      r, _, _ = select.select([fd], [], [], 0.2)
+                      if r:
+                          try:
+                              chunk = os.read(fd, 4096)
+                          except OSError:
+                              break
+                          if not chunk:
+                              break
+                          buf += chunk
+                          sys.stdout.buffer.write(chunk)
+                          sys.stdout.flush()
+
+                      elapsed = time.monotonic() - start
+
+                      # Dismiss any onboarding / trust dialog by pressing
+                      # Enter twice in the first two seconds.
+                      if phase == "boot" and elapsed > 1.5:
+                          os.write(fd, b"\r")
+                          time.sleep(0.4)
+                          os.write(fd, b"\r")
+                          phase = "type"
+
+                      elif phase == "type" and not typed and elapsed > 3.5:
+                          for ch in PROMPT:
+                              os.write(fd, ch.encode())
+                              time.sleep(0.02)
+                          typed = True
+
+                      elif typed and not submitted and elapsed > 4.5:
+                          os.write(fd, b"\r")
+                          submitted = True
+
+                      elif submitted and elapsed > 18.0:
+                          break
+              finally:
+                  try:
+                      os.kill(pid, signal.SIGTERM)
+                  except ProcessLookupError:
+                      pass
+                  try:
+                      os.waitpid(pid, 0)
+                  except ChildProcessError:
+                      pass
+              return 0
+
+          if __name__ == "__main__":
+              raise SystemExit(main())
+          PY
+
+      - name: Capture wire traffic
+        id: capture
+        env:
+          SURFACE: ${{ matrix.surface }}
+          PORT: ${{ matrix.port }}
+          CA_CERT: ${{ steps.prep.outputs.ca }}
+        run: |
+          set -euo pipefail
+          FLOW="_work/${SURFACE}.mitm"
+          MITM_LOG="_work/${SURFACE}-mitm.log"
+
+          # Launch mitmdump with the persistent confdir so the certificate
+          # authority stays consistent with what we injected into node.
+          mitmdump \
+            --listen-port "$PORT" \
+            --set confdir="$PWD/_mitm" \
+            --set stream_large_bodies=10m \
+            -w "$FLOW" \
+            > "$MITM_LOG" 2>&1 &
+          MITM_PID=$!
+          echo "mitmdump pid=$MITM_PID"
+          # Wait for port to bind.
+          for _ in $(seq 1 40); do
+            if ss -ltn | awk '{print $4}' | grep -qE ":${PORT}$"; then break; fi
+            sleep 0.25
+          done
+
+          export HTTPS_PROXY="http://127.0.0.1:${PORT}"
+          export HTTP_PROXY="http://127.0.0.1:${PORT}"
+          export NODE_EXTRA_CA_CERTS="$CA_CERT"
+          export SSL_CERT_FILE="$CA_CERT"
+
+          # Drive the surface. Both are expected to fail (401 from the
+          # server) — we only care about the outbound request.
+          case "$SURFACE" in
+            sdk)
+              timeout 30 claude \
+                -p "ci fingerprint probe" \
+                --model claude-sonnet-4-5 \
+                > _work/sdk-stdout.log 2> _work/sdk-stderr.log || true
+              ;;
+            cli)
+              timeout 30 python _scripts/drive_tui.py \
+                > _work/cli-stdout.log 2> _work/cli-stderr.log || true
+              ;;
+            *)
+              echo "::error::unknown surface: $SURFACE"; exit 1 ;;
+          esac
+
+          # SIGTERM — mitmdump flushes its write buffer on TERM but not on
+          # KILL. Wait up to 5s for a clean exit.
+          kill -TERM "$MITM_PID" || true
+          for _ in $(seq 1 20); do
+            if ! kill -0 "$MITM_PID" 2>/dev/null; then break; fi
+            sleep 0.25
+          done
+          # Only KILL as a last resort — we accept losing this run's data
+          # over hanging the runner.
+          if kill -0 "$MITM_PID" 2>/dev/null; then
+            echo "::warning::mitmdump did not exit on TERM, escalating"
+            kill -KILL "$MITM_PID" || true
+          fi
+          wait "$MITM_PID" 2>/dev/null || true
+
+          test -s "$FLOW" || { echo "::error::empty flow file $FLOW"; exit 1; }
+          echo "flow-file=$FLOW" >> "$GITHUB_OUTPUT"
+
+      - name: Write mitmproxy extraction addon
+        run: |
+          mkdir -p _scripts
+          cat > _scripts/extract_fingerprint.py <<'PY'
+          """mitmdump script addon. Reads flows and emits a normalized
+          fingerprint JSON to $FP_OUT.
+
+          Run via:  mitmdump -nr <flow> -s extract_fingerprint.py
+
+          Normalization rules (see .github/workflows/fingerprint-nightly.yml):
+            - Keep:   User-Agent, x-app, anthropic-version,
+                      anthropic-beta (ordered), all x-stainless-*,
+                      Anthropic-Dangerous-Direct-Browser-Access,
+                      cc_entrypoint (from body), system[0] billing prefix
+                      with cch=NORMALIZED / buildhash stripped.
+            - Strip:  cch=<hex>, x-client-request-id, X-Claude-Code-Session-Id,
+                      any request-id-shaped header, buildhash from cc_version.
+          """
+          from __future__ import annotations
+          import json, os, re, sys
+          from mitmproxy import http, io as mio
+
+          KEEP_HEADERS = {
+              "user-agent",
+              "x-app",
+              "anthropic-version",
+              "anthropic-beta",
+              "anthropic-dangerous-direct-browser-access",
+          }
+          STAINLESS_PREFIX = "x-stainless-"
+          STRIP_HEADERS = {
+              "x-client-request-id",
+              "x-claude-code-session-id",
+              "cch",
+          }
+
+          CCH_RE = re.compile(r"cch=[0-9a-f]{4,}", re.IGNORECASE)
+          BUILDHASH_RE = re.compile(r"cc_version=[^;]*buildhash=[0-9a-f]+;?", re.IGNORECASE)
+          BUILDHASH_INLINE_RE = re.compile(r"buildhash=[0-9a-f]+", re.IGNORECASE)
+
+          def normalize_billing(prefix: str) -> str:
+              s = CCH_RE.sub("cch=NORMALIZED", prefix)
+              s = BUILDHASH_INLINE_RE.sub("buildhash=NORMALIZED", s)
+              return s
+
+          def pick_flow(path: str) -> http.HTTPFlow | None:
+              best: http.HTTPFlow | None = None
+              with open(path, "rb") as f:
+                  reader = mio.FlowReader(f)
+                  for flow in reader.stream():
+                      if not isinstance(flow, http.HTTPFlow):
+                          continue
+                      req = flow.request
+                      if req is None:
+                          continue
+                      # We want the /v1/messages send. Fall back to any
+                      # anthropic.com request if we somehow miss it.
+                      if "anthropic.com" not in (req.host or ""):
+                          continue
+                      if "/v1/messages" in req.path:
+                          return flow
+                      best = flow
+              return best
+
+          def extract(flow: http.HTTPFlow) -> dict:
+              req = flow.request
+              out: dict = {
+                  "user_agent": None,
+                  "x_app": None,
+                  "anthropic_version": None,
+                  "anthropic_beta": [],
+                  "browser_access": None,
+                  "x_stainless": {},
+                  "cc_entrypoint": None,
+                  "system_billing_prefix": None,
+              }
+              for name, value in req.headers.items(multi=True):
+                  lname = name.lower()
+                  if lname in STRIP_HEADERS:
+                      continue
+                  if lname == "user-agent":
+                      out["user_agent"] = value
+                  elif lname == "x-app":
+                      out["x_app"] = value
+                  elif lname == "anthropic-version":
+                      out["anthropic_version"] = value
+                  elif lname == "anthropic-beta":
+                      # Beta header is comma-separated. Preserve order —
+                      # order is part of the fingerprint.
+                      out["anthropic_beta"] = [
+                          tok.strip() for tok in value.split(",") if tok.strip()
+                      ]
+                  elif lname == "anthropic-dangerous-direct-browser-access":
+                      out["browser_access"] = value
+                  elif lname.startswith(STAINLESS_PREFIX):
+                      out["x_stainless"][lname] = value
+
+              # Body inspection — cc_entrypoint + system[0] billing prefix.
+              try:
+                  body = json.loads(req.get_text() or "{}")
+              except Exception:
+                  body = {}
+              meta = body.get("metadata") or {}
+              out["cc_entrypoint"] = meta.get("cc_entrypoint") or meta.get("user_id")
+              system = body.get("system")
+              if isinstance(system, list) and system:
+                  first = system[0]
+                  if isinstance(first, dict):
+                      text = first.get("text") or ""
+                  else:
+                      text = str(first)
+                  if text.startswith("x-anthropic-billing-header:"):
+                      out["system_billing_prefix"] = normalize_billing(text)
+
+              return out
+
+          def main() -> int:
+              flow_path = os.environ["FLOW_IN"]
+              out_path = os.environ["FP_OUT"]
+              flow = pick_flow(flow_path)
+              if flow is None:
+                  print(f"::error::no anthropic.com flow found in {flow_path}", file=sys.stderr)
+                  return 2
+              fp = extract(flow)
+              with open(out_path, "w") as f:
+                  json.dump(fp, f, sort_keys=True, indent=2)
+                  f.write("\n")
+              print(f"wrote {out_path}")
+              return 0
+
+          if __name__ == "__main__":
+              raise SystemExit(main())
+          PY
+
+      - name: Extract + normalize fingerprint
+        env:
+          SURFACE: ${{ matrix.surface }}
+          FLOW_IN: ${{ steps.capture.outputs.flow-file }}
+        run: |
+          set -euo pipefail
+          mkdir -p _fp
+          FP_OUT="_fp/fingerprint-wire-${SURFACE}.json"
+          # mitmdump does NOT expose the mitmproxy Python module to a bare
+          # `python3` on the runner (it lives in mitmproxy's own venv). Run
+          # the extractor through mitmdump's runner instead.
+          FLOW_IN="$FLOW_IN" FP_OUT="$FP_OUT" \
+            python _scripts/extract_fingerprint.py
+          jq --sort-keys . "$FP_OUT" > "${FP_OUT}.sorted"
+          mv "${FP_OUT}.sorted" "$FP_OUT"
+          echo "--- $FP_OUT ---"
+          cat "$FP_OUT"
+
+      - name: Upload normalized fingerprint (no raw flows)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          # NOTE: only the normalized JSON is uploaded. Raw .mitm flow
+          # files contain the full system prompt and MUST NOT leave the
+          # runner.
+          name: fingerprint-wire-${{ matrix.surface }}
+          path: _fp/fingerprint-wire-${{ matrix.surface }}.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Diff against baseline
+        id: diff
+        env:
+          SURFACE: ${{ matrix.surface }}
+        run: |
+          set -euo pipefail
+          BASE="baseline/fingerprint-wire-${SURFACE}.json"
+          NEW="_fp/fingerprint-wire-${SURFACE}.json"
+          if [ ! -f "$BASE" ]; then
+            echo "no baseline yet — first run"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if diff -u <(jq --sort-keys . "$BASE") <(jq --sort-keys . "$NEW"); then
+            echo "no drift"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "drift detected"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Scrub raw flow files
+        if: always()
+        run: |
+          # Defense in depth: even if a step above forgot to gate an
+          # upload, the raw flow file never survives past this point.
+          find _work -maxdepth 2 -name '*.mitm' -delete || true
+
+      - name: Stage new baseline
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          SURFACE: ${{ matrix.surface }}
+        run: |
+          set -euo pipefail
+          mkdir -p baseline
+          cp "_fp/fingerprint-wire-${SURFACE}.json" "baseline/fingerprint-wire-${SURFACE}.json"
+
+      - name: Open drift PR
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@67df31e08a133c670fd85cb2074aad51e32db8ee # v7.0.5
+        with:
+          branch: fingerprint-drift/wire-${{ matrix.surface }}
+          base: main
+          title: 'fingerprint(wire-${{ matrix.surface }}): drift detected (${{ needs.binary-strings.outputs.version }})'
+          commit-message: |
+            fingerprint(wire-${{ matrix.surface }}): update baseline to ${{ needs.binary-strings.outputs.version }}
+
+            Detected by nightly fingerprint-drift workflow (CHECK 2: wire
+            capture, ${{ matrix.surface }} surface). The normalized outbound
+            request produced by driving the ${{ matrix.surface }} surface
+            with a fake credential differs from the committed baseline.
+
+            No raw mitmproxy flow files are committed — only the sorted,
+            dynamic-field-stripped JSON fingerprint.
+          body: |
+            Automated drift detection from `.github/workflows/fingerprint-nightly.yml`.
+
+            **Surface**: `${{ matrix.surface }}`
+            **Version**: `${{ needs.binary-strings.outputs.version }}`
+            **Check**: CHECK 2 (wire capture — authoritative).
+
+            The runner installed the sha512-verified tarball, ran the CLI
+            through mitmdump with a well-formed-but-invalid fake OAuth
+            token, and captured the outbound `/v1/messages` request. Dynamic
+            fields (`cch=`, `x-client-request-id`, session id, buildhash)
+            were stripped; header set including ordered `anthropic-beta`
+            and all `x-stainless-*` was preserved.
+
+            Cross-check with CHECK 1 (`fingerprint-binary`) — a drift in
+            both is strong evidence of a real upstream release; a drift in
+            wire-only usually means a runtime-computed value changed.
+          labels: |
+            fingerprint-drift
+            automated
+            surface:${{ matrix.surface }}
+          delete-branch: true
