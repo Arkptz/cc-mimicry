@@ -23,7 +23,7 @@ RUN apt-get update \
 ARG CPA_VERSION
 ARG CPA_COMMIT
 RUN git clone --depth 1 --branch "${CPA_VERSION}" \
-      https://github.com/router-for-me/CLIProxyAPI.git /CLIProxyAPI \
+      https://github.com/Arkptz/CLIProxyAPI.git /CLIProxyAPI \
     && ACTUAL=$(git -C /CLIProxyAPI rev-parse HEAD) \
     && if [ "$ACTUAL" != "${CPA_COMMIT}" ]; then \
          printf 'FATAL: tag %s resolved to %s, expected %s\n' \
