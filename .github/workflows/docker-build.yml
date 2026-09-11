@@ -199,9 +199,9 @@ jobs:
         run: |
           CPA_VERSION=$(cat .cpa-version)
           CPA_COMMIT=$(cat .cpa-commit)
-          ACTUAL=$(git ls-remote https://github.com/router-for-me/CLIProxyAPI.git "refs/tags/${CPA_VERSION}^{}" | cut -f1)
+          ACTUAL=$(git ls-remote https://github.com/Arkptz/CLIProxyAPI.git "refs/tags/${CPA_VERSION}^{}" | cut -f1)
           if [ -z "$ACTUAL" ]; then
-            ACTUAL=$(git ls-remote https://github.com/router-for-me/CLIProxyAPI.git "refs/tags/${CPA_VERSION}" | cut -f1)
+            ACTUAL=$(git ls-remote https://github.com/Arkptz/CLIProxyAPI.git "refs/tags/${CPA_VERSION}" | cut -f1)
           fi
           if [ "$ACTUAL" != "$CPA_COMMIT" ]; then
             echo "::error::CPA SDK tag $CPA_VERSION resolves to $ACTUAL, expected pinned $CPA_COMMIT"
