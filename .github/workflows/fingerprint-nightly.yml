@@ -233,7 +233,7 @@ jobs:
 
       - name: Open drift PR
         if: steps.diff.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@67df31e08a133c670fd85cb2074aad51e32db8ee # v7.0.5
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7.0.11
         with:
           branch: fingerprint-drift/binary
           base: main
@@ -710,7 +710,7 @@ jobs:
 
       - name: Open drift PR
         if: steps.diff.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@67df31e08a133c670fd85cb2074aad51e32db8ee # v7.0.5
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7.0.11
         with:
           branch: fingerprint-drift/wire-${{ matrix.surface }}
           base: main

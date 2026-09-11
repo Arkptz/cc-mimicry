@@ -3,12 +3,12 @@
 # nix-installer-action needs systemd, unavailable in act's container) — run
 # `nix flake check` in your devshell instead.
 #
-# The lint/test/vuln jobs need the CLIProxyAPI SDK at ../CLIProxyAPI (the go.mod
+# The lint/test/vuln jobs need the CLIProxyAPI SDK at ../forks/CLIProxyAPI (the go.mod
 # replace target). Clone it first (or override via a local go.work):
 #   CPA_VERSION=$(cat .cpa-version); CPA_COMMIT=$(cat .cpa-commit)
 #   git clone --depth 1 --branch "$CPA_VERSION" \
-#     https://github.com/Arkptz/CLIProxyAPI.git ../CLIProxyAPI
-#   [ "$(git -C ../CLIProxyAPI rev-parse HEAD)" = "$CPA_COMMIT" ] || echo "WARNING: SHA mismatch"
+#     https://github.com/Arkptz/CLIProxyAPI.git ../forks/CLIProxyAPI
+#   [ "$(git -C ../forks/CLIProxyAPI rev-parse HEAD)" = "$CPA_COMMIT" ] || echo "WARNING: SHA mismatch"
 #
 # Usage:
 #   ./scripts/ci-local.sh              # run all act-compatible jobs
