@@ -86,15 +86,14 @@ func applyRequestMimicry(body []byte, cfg pluginConfig, profile SurfaceProfile, 
 	return body, rw
 }
 
-// rewriteSystemForClaudeCode rebuilds system into the CLI 2.1.206 4-block form
+// rewriteSystemForClaudeCode rebuilds system into the CLI 2.1.268 3-block form
 // and relocates the original system prompt into a user/assistant message pair.
 //
 //	[0] billing attribution block
 //	    (x-anthropic-billing-header: cc_version=<ver>.<buildhash>; cc_entrypoint=<surface>; cch=00000;)
-//	[1] surface AgentIdentifier (no cache_control)
-//	[2] shared intro/security/System/DoingTasks/Tone bundle
-//	    (cache_control ephemeral 1h, scope: "global")
-//	[3] surface TextOutputSection (cache_control ephemeral 1h)
+//	[1] surface AgentIdentifier (cache_control ephemeral)
+//	[2] shared intro/security/System/DoingTasks/Tone/TextOutput bundle
+//	    (cache_control ephemeral)
 //
 // If the system already looks like Claude Code or the current surface's agent
 // identifier is already present, the request is left untouched — we must not

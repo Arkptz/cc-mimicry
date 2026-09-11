@@ -10,13 +10,24 @@
 # Usage:
 #   ./build.sh                      # build for the host platform into ./dist
 #   OUT_DIR=/path ./build.sh        # override output dir
-#   VERSION=0.2.0 ./build.sh        # stamp a plugin version
+#   VERSION=0.2.0 ./build.sh        # override the version (default: git describe)
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
 ID="cc-mimicry"
-VERSION="${VERSION:-0.1.0}"
+# Derive the stamped version from the most recent v* tag so a local build cannot
+# disagree with the release it was built from. Falls back to 0.0.0-dev outside a
+# git checkout (e.g. the Docker build, which passes VERSION explicitly).
+default_version() {
+	local described
+	described=$(git describe --tags --match 'v*' --dirty 2>/dev/null) || {
+		echo "0.0.0-dev"
+		return
+	}
+	echo "${described#v}"
+}
+VERSION="${VERSION:-$(default_version)}"
 OUT_DIR="${OUT_DIR:-dist}"
 
 GOOS="${GOOS:-$(go env GOOS)}"

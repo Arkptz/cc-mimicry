@@ -29,13 +29,21 @@ This PROC is the repeatable recipe for extracting that fingerprint from any new 
 
 **Checklist:**
 
-- Node.js >= 22 installed (verified: v24.15.0) — required for `node --experimental-strip-types`
-- `npm` available — used only for `npm view` registry queries
-- `strings` (GNU binutils), `file`, `python3`, `pgrep`, `ss` available on PATH
-- Live OAuth access token (`sk-ant-oat01-…`) obtained from CPA container `/root/.cli-proxy-api/*.json` (pick one with `expired` > now and high tier e.g. `max_20x`)
-- `CLAUDE_CODE_OAUTH_TOKEN` exported in the shell
+- `nix` available. `capture-live.sh` resolves mitmproxy and its Python bindings
+  from THIS repo's `flake.lock` (the `recon-proxy` / `recon-python` outputs), so
+  every operator runs the same versions. Nothing needs to be installed by hand.
+- `strings` (GNU binutils), `file`, `jq`, `curl`, `openssl`, `script` (util-linux,
+  for the pty-driven cli surface) on PATH
+- A working Claude Code credential. `capture-live.sh` takes it from
+  `ANTHROPIC_AUTH_TOKEN`, or reads the file named by `CC_TOKEN_FILE`
+  (default `/var/lib/bifrost-vk/claude-code`). Point `--upstream` at whatever
+  that credential is valid for; it defaults to `https://api.anthropic.com`.
+  (The legacy `capture.ts` used `CLAUDE_CODE_OAUTH_TOKEN`; the current scripts
+  do not read that variable.)
 - Repo scripts present: `scripts/recon/fetch-binary.sh`, `scripts/recon/capture-live.sh`, `scripts/recon/flow-to-fixture.py`, `scripts/recon/check-binary.sh`, `scripts/recon/extract-cch.ts`, `scripts/recon/xxhash64.ts`
-- Working directory is `/home/arkptz/git/mine/cc-mimicry`
+- Working directory is the repository root
+- Node.js >= 22 and `npm` — only for `npm view` registry queries and the legacy
+  TypeScript recon scripts
 
 **Obtaining the OAuth token from the CPA container:**
 
@@ -135,14 +143,12 @@ Five sequential stages; each has a clear pass/fail gate before proceeding to the
    grep '"x-app"' /tmp/cc-strings.txt              # Expected: cli
    grep "x-stainless-package-version" /tmp/cc-strings.txt
 
-   # Full beta-token table
-   grep -aoE '"[a-z][a-z0-9-]*-202[0-9]-[0-9]{2}-[0-9]{2}"' /tmp/cc-strings.txt | sort -u
-   # v2.1.206 expected (9 tokens):
-   #   "advisor-tool-2026-03-01"         "claude-code-20250219"
-   #   "context-management-2025-06-27"   "effort-2025-11-24"
-   #   "interleaved-thinking-2025-05-14" "mid-conversation-system-2026-04-07"
-   #   "prompt-caching-scope-2026-01-05" "structured-outputs-2025-12-15"
-   #   "thinking-token-count-2026-05-13"
+   # Every dated beta token the binary knows about. This is the SUPERSET — the
+   # CLI sends only a subset on any given surface, so do NOT treat this list as
+   # the fingerprint. See the three-sets table in the appendix.
+   grep -aoE '[a-z][a-z0-9-]*-202[0-9]-[0-9]{2}-[0-9]{2}' /tmp/cc-strings.txt | sort -u
+   # v2.1.268: ~52 tokens. The 11 the plugin sends are in surface.go; each must
+   # appear here, or it has been withdrawn upstream.
    ```
 
    **KEY LEARNING (v2.1.206):** `cch` is a **static `cch=00000` placeholder** — the old xxHash64+seed+salt machinery is dead/legacy. No crypto port needed unless the conditional grep above shows activity.
@@ -287,8 +293,20 @@ Five sequential stages; each has a clear pass/fail gate before proceeding to the
    segments seen in the binary: `cc_workload`, `cc_is_subagent`, `cc_prev_req`,
    `cc_prompt_id`.
 
-   On-the-wire `anthropic-beta` tokens (9 total, all CPA-owned via `applyClaudeHeaders`):
-   `claude-code-20250219`, `interleaved-thinking-2025-05-14`, `thinking-token-count-2026-05-13`, `context-management-2025-06-27`, `prompt-caching-scope-2026-01-05`, `mid-conversation-system-2026-04-07`, `advisor-tool-2026-03-01`, `effort-2025-11-24`, `structured-outputs-2025-12-15`.
+   **`anthropic-beta` — three DIFFERENT sets. Conflating them is how the old
+   appendix ended up claiming a single wrong number.**
+
+   | Set | Size | How to obtain | What it means |
+   |---|---|---|---|
+   | Known to the binary | ~52 dated tokens in 2.1.268 | `strings -a "$CLAUDE_BIN" \| grep -oE '[a-z0-9-]+-20[0-9]{2}-[0-9]{2}-[0-9]{2}' \| sort -u` | every token the CLI can ever send, including ones gated behind flags or other surfaces. NOT a fingerprint. |
+   | Sent by the plugin | cli=11, sdk-cli=10 | `cliBetas` / `sdkCLIBetas` in `internal/mimicry/surface.go` | what we impersonate. Each must exist in the binary. |
+   | Seen on the wire | cli=6, sdk-cli=5 in the 2.1.268 relay captures | `jq -r .betas testdata/captures/v$VER/cli-body.json` | what THIS capture environment produced. Missing the 5 `authGatedBetas` — see the auth gotcha in Step C. |
+
+   A token being in the binary but absent from the wire is normal (e.g.
+   `mid-conversation-system-2026-04-07`, `effort-2025-11-24`,
+   `structured-outputs-2025-12-15` are all present in the 2.1.268 ELF yet sent by
+   neither surface). Only the middle set is the contract; the integration test
+   pins it by equality against the capture plus the `authGatedBetas` allowance.
 ## Exceptions and Escalation
 | Condition | Symptom | Resolution |
 |---|---|---|
@@ -298,7 +316,7 @@ Five sequential stages; each has a clear pass/fail gate before proceeding to the
 | Fixture rejected for wrong entrypoint | `captured cc_entrypoint=… but --surface=…` | The CLI was driven in the wrong mode. `-p` is always sdk-cli; the cli surface needs the pty-driven TUI path. |
 | All requests get 401 | Fixture has `status: 401` in every captured request | The OAuth token has expired. Re-obtain from CPA container (see Prerequisites). The fingerprint headers are still visible in the 401 request — capture is still valid for header extraction. |
 | CPA source not available locally | No CPA git checkout for Step D | Use `git -C <cpa-dir> show <tag>:internal/runtime/executor/claude_executor.go` against a cached remote, or check the `.cpa-version` / `.cpa-commit` pinned in this repo and fetch that commit from the upstream CPA remote. |
-| Port 18899 already in use | `capture.ts` exits immediately with `EADDRINUSE` | Kill the conflicting process: `fuser -k 18899/tcp`, then retry. |
+| Capture port already in use | `mitmdump` exits at startup; `_work/capture-<VER>/<surface>-mitm.log` shows the bind error | Kill the conflicting process (`fuser -k 18080/tcp`) or pass `--port`. |
 | New beta token found that is not in SPEC-001 | Step E diff shows a new `*-202X-*` token | Add to the appendix of this PROC; open a ticket to update SPEC-001's beta invariant list and POL-001 if it introduces a new correctness constraint. |
 ## Metrics
 | Metric | Target | Notes |

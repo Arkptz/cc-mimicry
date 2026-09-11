@@ -41,7 +41,7 @@ Applied to Anthropic `/v1/messages` requests (source format `claude`/`anthropic`
    match the real CLI payload when absent.
 5. **Egress header override** (P4 hook) — overrides `user-agent`, `x-app`,
    `anthropic-beta`, `anthropic-version`, `x-stainless-*`, and
-   `anthropic-dangerous-direct-browser-access` to CLI 2.1.206 values via the
+   `anthropic-dangerous-direct-browser-access` to CLI 2.1.268 values via the
    CPA EgressHeaderInterceptor ABI hook (post-auth, pre-send). Strips
    CPA-injected headers absent from real CLI captures.
 
@@ -56,9 +56,17 @@ Each transform is individually toggleable (see [Config](#config)).
 
 - Go 1.26+
 - A C compiler (gcc/clang) for CGO
-- A local CLIProxyAPI checkout on the matching version at `../CLIProxyAPI` (the
-  `go.mod` `replace` target). A gitignored `go.work` can override the path for a
-  different local layout.
+- The pinned CLIProxyAPI SDK checked out at the `go.mod` `replace` target, which
+  sits OUTSIDE the repository — a fresh clone cannot build until it is there:
+
+  ```bash
+  scripts/setup-sdk.sh   # clones the fork at .cpa-version and verifies .cpa-commit
+  ./build.sh
+  ```
+
+  The SDK comes from the `Arkptz/CLIProxyAPI` fork, not upstream: the plugin ABI
+  commits the build needs exist only there. A gitignored `go.work` can override
+  the path for a different local layout.
 
 ## GHCR artifact image
 
