@@ -10,16 +10,17 @@ package mimicry
 // versa) fails here loudly before it can reach the wire.
 //
 // It calls the same two functions the plugin ABI dispatches to on the hot path:
-//   - buildClaudeCodeSystemBlocks(profile) — the 4-block system[] body
+//   - buildClaudeCodeSystemBlocks(profile) — the 3-block system[] body
 //   - buildEgressHeaderResponse(profile)   — the P4 egress header override
 //
 // and asserts the cross-surface invariants F3 demands:
-//   - system[] is 4 blocks with the right types and cache_control shapes;
+//   - system[] is 3 blocks with the right types and cache_control shapes;
 //   - system[0] carries the "x-anthropic-billing-header:" prefix, the CPA
 //     cch=00000 placeholder, and the surface's cc_entrypoint token;
 //   - system[1] is the surface's exact agent identifier;
 //   - system[2] is the shared 10676-byte intro (surface-invariant);
-//   - system[3] starts with the static "# Text output" prefix;
+//   - system[2] carries the "# Text output" section, which 2.1.268 folded into
+//     the intro block;
 //   - the header override sets the surface's User-Agent, the right beta count
 //     (cli=11, sdk-cli=10) with the surface-discriminating token, all shared
 //     x-stainless-* values, browser-access=true, and x-app=cli.
@@ -32,10 +33,14 @@ package mimicry
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/tidwall/gjson"
 )
 
 // integrationCase pairs a surface profile with the capture file that pins the
@@ -76,17 +81,41 @@ func TestIntegrationFingerprintPipeline(t *testing.T) {
 			capt := loadCapture(t, tc.capture)
 			assertBodyPipeline(t, tc, capt)
 			assertHeaderPipeline(t, tc, capt)
+			assertToolsShape(t, tc, capt)
 		})
 	}
+}
+
+// authGatedBetas are the tokens the real CLI withholds when the session is not
+// firstParty OAuth, so a capture taken through a relay legitimately lacks them.
+// They are NOT unverified: each one is present in the 2.1.268 ELF (PROC-001
+// Step B). Anything outside this list must match the capture exactly — keeping
+// the list short and explicit is what makes a dropped token fail the test.
+var authGatedBetas = []string{
+	"oauth-2025-04-20",
+	"advisor-tool-2026-03-01",
+	"advanced-tool-use-2025-11-20",
+	"extended-cache-ttl-2025-04-11",
+	"cache-diagnosis-2026-04-07",
 }
 
 // capture models the subset of the golden JSON this test reads. Fields absent
 // from the sdk capture (ua/betas) decode to the zero value and are skipped
 // downstream — see assertHeaderPipeline.
 type capture struct {
-	UA    string        `json:"ua"`
-	Betas string        `json:"betas"`
-	Sys   []captureSlot `json:"system_blocks"`
+	UA         string            `json:"ua"`
+	Betas      string            `json:"betas"`
+	Headers    map[string]string `json:"headers"`
+	ToolsShape toolsShape        `json:"tools_shape"`
+	Sys        []captureSlot     `json:"system_blocks"`
+}
+
+// toolsShape records what the real CLI's tools[] looked like, without the
+// caller-specific tool names.
+type toolsShape struct {
+	Count            int             `json:"count"`
+	WithCacheControl int             `json:"with_cache_control"`
+	LastCacheControl json.RawMessage `json:"last_cache_control"`
 }
 
 type captureSlot struct {
@@ -229,21 +258,78 @@ func assertHeaderPipeline(t *testing.T, tc integrationCase, capt capture) {
 	if tc.betaAntiTok != "" && containsToken(tokens, tc.betaAntiTok) {
 		t.Errorf("Anthropic-Beta MUST NOT contain %q on %s: %v", tc.betaAntiTok, tc.name, tokens)
 	}
-	// The capture's beta set is a subset of the profile's: tokens gated on the
-	// auth mode (oauth-*) or on account entitlements are absent when the capture
-	// is taken through a relay. Every token the real CLI did send must still be
-	// one the plugin sends.
+	// Pin the beta set by EQUALITY against the capture, modulo an explicit list
+	// of tokens the CLI omits when the capture is not taken over firstParty
+	// OAuth. A plain subset check would pass even if a token were dropped from
+	// the profile — the exact drift direction this repo exists to catch.
+	wantBetas := make([]string, 0, len(tokens))
 	for token := range strings.SplitSeq(capt.Betas, ",") {
-		token = strings.TrimSpace(token)
-		if token == "" {
-			continue
+		if token = strings.TrimSpace(token); token != "" {
+			wantBetas = append(wantBetas, token)
 		}
-		if !containsToken(tokens, token) {
-			t.Errorf("Anthropic-Beta missing %q, which the capture carried: %q", token, beta)
+	}
+	for _, token := range authGatedBetas {
+		if containsToken(tokens, token) && !containsToken(wantBetas, token) {
+			wantBetas = append(wantBetas, token)
 		}
+	}
+	sortedGot := slices.Sorted(slices.Values(tokens))
+	sortedWant := slices.Sorted(slices.Values(wantBetas))
+	if !slices.Equal(sortedGot, sortedWant) {
+		t.Errorf("Anthropic-Beta disagrees with capture (auth-gated tokens allowed: %v):\n got: %v\nwant: %v",
+			authGatedBetas, sortedGot, sortedWant)
 	}
 
 	// Shared x-stainless-* + browser-access + x-app. Same tuple for both
 	// surfaces — reused so a regression on either surface fails here.
 	assertSharedStainless(t, h)
+
+	// Every static header the capture recorded must match byte-for-byte. This
+	// is what pins values like x-stainless-package-version, which a constants-
+	// only assertion cannot catch when upstream bumps it.
+	for name, want := range capt.Headers {
+		if slices.Contains(captureOnlyHeaders, name) {
+			continue
+		}
+		if got := h.Get(name); got != want {
+			t.Errorf("header %q disagrees with capture: got %q want %q", name, got, want)
+		}
+	}
+}
+
+// captureOnlyHeaders are recorded for reference but not emitted by the egress
+// hook: the HTTP client or CPA owns them, not the plugin.
+// anthropic-beta is excluded because it is auth-dependent and already compared
+// above with the authGatedBetas allowance.
+var captureOnlyHeaders = []string{"accept", "content-type", "x-stainless-timeout", "anthropic-beta"}
+
+// assertToolsShape pins the tools[] shape against the capture. 2.1.268 sends no
+// cache_control on any tool, so a breakpoint the plugin adds is a positive
+// discriminator — the one thing an impersonator must never emit alone.
+func assertToolsShape(t *testing.T, tc integrationCase, capt capture) {
+	t.Helper()
+	if capt.ToolsShape.Count == 0 {
+		t.Skipf("%s: capture recorded no tools_shape", tc.name)
+	}
+
+	tools := make([]string, 0, capt.ToolsShape.Count)
+	for i := range capt.ToolsShape.Count {
+		tools = append(tools, fmt.Sprintf(`{"name":"tool_%d","input_schema":{"type":"object"}}`, i))
+	}
+	body := []byte(`{"model":"claude-sonnet-4","tools":[` + strings.Join(tools, ",") + `],"messages":[]}`)
+
+	out := applyToolNameRewriteToBody(body, nil, defaultConfig().CacheBreakpoints)
+
+	withCC := 0
+	gjson.GetBytes(out, "tools").ForEach(func(_, tool gjson.Result) bool {
+		if tool.Get("cache_control").Exists() {
+			withCC++
+		}
+		return true
+	})
+	if withCC != capt.ToolsShape.WithCacheControl {
+		t.Errorf("%s: %d tools carry cache_control, but the real CLI sent %d — "+
+			"emitting one is a positive fingerprint discriminator",
+			tc.name, withCC, capt.ToolsShape.WithCacheControl)
+	}
 }

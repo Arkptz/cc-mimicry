@@ -26,3 +26,8 @@ config.yaml
 
 # Recon working dir (downloaded CLI binaries, raw flows — never committed)
 /_work/
+
+# Raw intercepted traffic — carries live Authorization headers and bodies
+*.flow
+mitm_mcp_traffic.db
+*.mitm.db

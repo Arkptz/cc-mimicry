@@ -165,8 +165,19 @@ Five sequential stages; each has a clear pass/fail gate before proceeding to the
 
    **GOTCHA — capture environment leaks into the beta set:** tokens gated on the
    auth mode (`oauth-*`) or on account entitlements are absent when capturing
-   through a relay or an API key. Treat the capture's `anthropic-beta` as a
-   subset, and confirm the full set against the binary's strings (Step B).
+   through a relay or an API key. Confirm the full set against the binary's
+   strings (Step B). The integration test still compares by EQUALITY, allowing
+   only the tokens named in its `authGatedBetas` list — keep that list in sync
+   rather than weakening the comparison, or a REMOVED token stops failing.
+
+   The fixture records every non-secret request header plus the shape of
+   `tools[]`, not just `ua`/`betas`. That is deliberate: a field the fixture
+   never captures cannot be pinned by any test, which is how
+   `x-stainless-package-version` drifted `0.94.0` → `0.112.1` unnoticed.
+
+   The raw `.flow` carries the live `Authorization` header and is deleted once
+   the fixture is written. Set `CC_KEEP_FLOWS=1` to keep it while debugging, and
+   delete it yourself afterwards.
 
    **GOTCHA — `cch` only appears for firstParty auth:** the CLI emits
    ` cch=00000;` only when the account is firstParty (or vertex), so a relay
@@ -263,7 +274,7 @@ Five sequential stages; each has a clear pass/fail gate before proceeding to the
    | Field | Value | Static/Runtime | Owned by |
    |---|---|---|---|
    | `user-agent` | `claude-cli/2.1.268 (external, sdk-cli)` | Runtime (version substituted) | CPA executor |
-   | `x-stainless-package-version` | `0.94.0` | Static | CPA executor |
+   | `x-stainless-package-version` | `0.112.1` | Static | CPA executor |
    | `anthropic-version` | `2023-06-01` | Static | CPA executor |
    | `x-app` | `cli` | Static | CPA executor |
    | `x-anthropic-billing-header` | `cc_version=2.1.268.<buildhash>; cc_entrypoint=<surface>;` | Runtime (`cch=` only for firstParty/vertex auth) | CPA executor |

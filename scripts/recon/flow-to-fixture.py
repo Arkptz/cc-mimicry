@@ -23,6 +23,17 @@ from mitmproxy import http
 # Header values that must never land in a committed fixture.
 SECRET_HEADERS = {"authorization", "x-api-key", "proxy-authorization", "cookie"}
 
+# Per-request or per-machine values: recording them would make the fixture fail
+# on the next capture for reasons that are not fingerprint drift.
+VOLATILE_HEADERS = {
+    "x-claude-code-session-id",
+    "content-length",
+    "host",
+    "connection",
+    "accept-encoding",
+    "x-stainless-retry-count",
+}
+
 # cch is per-request and signed downstream; the fixtures redact it so byte
 # comparisons stay stable across captures.
 CCH_RE = re.compile(r"cch=[0-9a-f]+", re.IGNORECASE)
@@ -85,6 +96,30 @@ def build_fixture(flow: http.HTTPFlow, surface: str, version: str) -> dict[str, 
         )
 
     entrypoint = "sdk-cli" if surface == "sdk-cli" else "cli"
+
+    # Persist every non-secret request header. Recording only ua/betas is how
+    # x-stainless-package-version drifted 0.94.0 -> 0.112.1 unnoticed: a field
+    # the fixture never captured cannot be pinned by a test.
+    safe_headers = {
+        k.lower(): v
+        for k, v in headers.items()
+        if k.lower() not in SECRET_HEADERS and k.lower() not in VOLATILE_HEADERS
+    }
+
+    # The shape of tools[] is part of the fingerprint (2.1.268 sends no
+    # cache_control on any tool); the names are the caller's, so keep only the
+    # shape.
+    tools = body.get("tools") or []
+    tools_shape = {
+        "count": len(tools),
+        "with_cache_control": sum(
+            1 for t in tools if isinstance(t, dict) and "cache_control" in t
+        ),
+        "last_cache_control": (
+            tools[-1].get("cache_control") if tools and isinstance(tools[-1], dict) else None
+        ),
+    }
+
     return {
         "_note": (
             f"REAL Claude Code {version} ({entrypoint} entrypoint) FULL system[] body. "
@@ -94,6 +129,8 @@ def build_fixture(flow: http.HTTPFlow, surface: str, version: str) -> dict[str, 
         "_surface": surface,
         "ua": headers.get("user-agent"),
         "betas": headers.get("anthropic-beta"),
+        "headers": safe_headers,
+        "tools_shape": tools_shape,
         "system_blocks": system_blocks,
     }
 

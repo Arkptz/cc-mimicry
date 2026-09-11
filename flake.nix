@@ -27,6 +27,15 @@
             touch $out
           '';
 
+          # Capture toolchain for scripts/recon/capture-live.sh, exposed so the
+          # script resolves these through this flake's lock rather than whatever
+          # the caller's nixpkgs registry happens to point at.
+          #
+          # Two outputs, not one env: the mitmproxy app and a python carrying the
+          # mitmproxy library both ship bin/mitmdump and collide in a buildEnv.
+          packages.recon-proxy = pkgs.mitmproxy;
+          packages.recon-python = pkgs.python3.withPackages (ps: [ ps.mitmproxy ]);
+
           devShells.default = pkgs.mkShell {
             packages = [
               pkgs.go_1_26

@@ -24,6 +24,9 @@ PORT="${CC_CAPTURE_PORT:-18080}"
 UPSTREAM="${ANTHROPIC_BASE_URL:-https://api.anthropic.com}"
 TOKEN_FILE="${CC_TOKEN_FILE:-/var/lib/bifrost-vk/claude-code}"
 MODEL="${CC_CAPTURE_MODEL:-claude-sonnet-4-5-20250929}"
+# Raw mitmproxy flows hold the live auth header; deleted after conversion
+# unless the operator needs them to debug a capture.
+KEEP_FLOWS="${CC_KEEP_FLOWS:-0}"
 PROMPT="${CC_CAPTURE_PROMPT:-Reply with the single word: ok}"
 
 while [ $# -gt 0 ]; do
@@ -79,8 +82,10 @@ WORK_DIR="$REPO_ROOT/_work/capture-$VERSION"
 CAPTURE_DIR="$REPO_ROOT/testdata/captures/v$VERSION"
 mkdir -p "$WORK_DIR" "$CAPTURE_DIR"
 
-# A python that can import mitmproxy, for the flow -> fixture conversion.
-PYTHON_MITM_EXPR=(--impure --expr "(import <nixpkgs> {}).python3.withPackages (ps: [ ps.mitmproxy ])")
+# Both tools come from this repo's flake, so a capture run resolves the same
+# mitmproxy the lock pins rather than the caller's nixpkgs registry.
+MITMDUMP="$(nix build "$REPO_ROOT#recon-proxy" --no-link --print-out-paths)/bin/mitmdump"
+RECON_PYTHON="$(nix build "$REPO_ROOT#recon-python" --no-link --print-out-paths)/bin/python3"
 
 case "$SURFACES" in
   both) SURFACE_LIST="cli sdk-cli" ;;
@@ -102,10 +107,9 @@ capture_one() {
   # mitmdump's reverse spec accepts scheme://host:port only, so any path prefix
   # on the upstream (e.g. a relay's /anthropic) is kept on the client side and
   # re-attached to the CLI's base URL below.
-  nix shell nixpkgs#mitmproxy --command \
-    mitmdump --mode "reverse:$UPSTREAM_ORIGIN" --listen-port "$PORT" \
-      --set flow_detail=0 --set termlog_verbosity=warn \
-      -w "$flow" > "$mitm_log" 2>&1 &
+  "$MITMDUMP" --mode "reverse:$UPSTREAM_ORIGIN" --listen-port "$PORT" \
+    --set flow_detail=0 --set termlog_verbosity=warn \
+    -w "$flow" > "$mitm_log" 2>&1 &
   local mitm_pid=$!
   # shellcheck disable=SC2064  # expand now: the pid must be captured at trap time
   trap "kill $mitm_pid 2>/dev/null || true" RETURN
@@ -175,10 +179,9 @@ capture_one() {
   # than on the ambient sys.path, so run the converter with both taken from the
   # package itself.
   # The mitmproxy binary package does not expose its modules to an ambient
-  # python, so build an interpreter that has the library on its path.
-  nix shell "${PYTHON_MITM_EXPR[@]}" --command \
-    python3 "$REPO_ROOT/scripts/recon/flow-to-fixture.py" \
-      --flow "$flow" --surface "$surface" --version "$VERSION" --output "$out"
+  # python, hence the separate interpreter that carries the library.
+  "$RECON_PYTHON" "$REPO_ROOT/scripts/recon/flow-to-fixture.py" \
+    --flow "$flow" --surface "$surface" --version "$VERSION" --output "$out"
 
   # Secrets must never reach testdata/. The converter already compares against
   # the request's real credential values; this is a second, value-shaped net.
@@ -201,6 +204,15 @@ capture_one() {
   fi
 
   echo "wrote $out"
+
+  # The raw flow carries the live Authorization header and the full bodies.
+  # Once the fixture is written it has no further use; keep it only when the
+  # operator asks, and say so, since it is a credential on disk.
+  if [ "$KEEP_FLOWS" = "1" ]; then
+    echo "note: keeping $flow — it contains a live credential" >&2
+  else
+    rm -f "$flow"
+  fi
 }
 
 for surface in $SURFACE_LIST; do

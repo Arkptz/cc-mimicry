@@ -17,11 +17,11 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
-// Static x-stainless-* fingerprint captured from CLI 2.1.206. These values are
+// Static x-stainless-* fingerprint captured from CLI 2.1.268. These values are
 // surface-invariant (identical between the interactive TUI and the -p / print
 // entrypoint) — only the User-Agent and Anthropic-Beta set diverge per surface.
 const (
-	stainlessPackageVersion = "0.94.0"
+	stainlessPackageVersion = "0.112.1"
 	stainlessRuntimeVersion = "v26.3.0"
 	stainlessOS             = "Linux"
 	stainlessArch           = "x64"

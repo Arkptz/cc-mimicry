@@ -14,11 +14,13 @@ type pluginConfig struct {
 	// ObfuscateToolNames toggles the static+dynamic tool-name rename (and its
 	// reverse on responses/stream chunks). Default true.
 	ObfuscateToolNames bool `yaml:"obfuscate_tool_names"`
-	// InjectSystemPrompt toggles the Claude Code 4-block system prompt rewrite.
+	// InjectSystemPrompt toggles the Claude Code 3-block system prompt rewrite.
 	// Default true.
 	InjectSystemPrompt bool `yaml:"inject_system_prompt"`
 	// CacheBreakpoints toggles the ephemeral cache_control breakpoint on the last
-	// tool. Default true.
+	// tool. Default FALSE: the 2.1.268 captures carry no cache_control on any of
+	// their 221 tools, so emitting one is a positive fingerprint discriminator.
+	// Enable it only when trading fingerprint fidelity for prompt caching.
 	CacheBreakpoints bool `yaml:"cache_breakpoints"`
 	// FillFingerprint toggles request-body fingerprint fill (temperature,
 	// max_tokens, context_management). Default true.
@@ -36,7 +38,7 @@ func defaultConfig() pluginConfig {
 	return pluginConfig{
 		ObfuscateToolNames: true,
 		InjectSystemPrompt: true,
-		CacheBreakpoints:   true,
+		CacheBreakpoints:   false,
 		FillFingerprint:    true,
 		Surface:            "cli",
 	}

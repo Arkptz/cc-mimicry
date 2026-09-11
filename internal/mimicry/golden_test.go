@@ -94,22 +94,25 @@ func TestGoldenSystemBlocksMatchCaptures(t *testing.T) {
 	}
 }
 
+// cchSegmentRE matches exactly the " cch=<value>;" segment, so removing it
+// cannot swallow whatever follows. Cutting at " cch=" instead would drop the
+// rest of the line, hiding any segment the CLI appends after it
+// (cc_workload, cc_is_subagent, cc_prev_req, cc_prompt_id — see PROC-001).
+var cchSegmentRE = regexp.MustCompile(` cch=[^;]*;`)
+
 // normaliseCchTail rewrites the two dynamic segments of the billing line to
 // fixed placeholders: the buildhash after cc_version=<ver>. and the cch= tail.
 // The plugin always emits "cch=00000;", while a capture carries the real value,
 // the "<DYNAMIC>" redaction, or nothing at all — the CLI only sends cch for
 // firstParty auth, so a capture taken through a relay has no cch segment.
+// Every OTHER segment stays in the compare.
 func normaliseCchTail(text string) string {
 	text = billingDynamicsRE.ReplaceAllString(text, "${1}XXX")
-	// Drop the optional cch segment so a relay capture (which has none) and the
-	// plugin's "cch=00000;" placeholder compare equal.
-	if before, _, found := strings.Cut(text, " cch="); found {
-		text = strings.TrimRight(before, " ")
-	}
+	text = cchSegmentRE.ReplaceAllString(text, "")
 	if !strings.HasSuffix(text, ";") {
 		text += ";"
 	}
-	return text
+	return strings.TrimRight(text, " ")
 }
 
 // staticIntroPrefix returns the STATIC prefix of the intro block up to (but

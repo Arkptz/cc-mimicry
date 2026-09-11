@@ -10,5 +10,6 @@
     "MD060": false  // table-pipe-style: cosmetic pipe spacing, not worth churning tables
   },
   "globs": ["**/*.md"],
-  "ignores": ["**/docs/**", "**/.dg/**", "**/CHANGELOG.md"]
+  // _work holds the downloaded CLI release, whose own markdown is not ours to lint.
+  "ignores": ["**/docs/**", "**/.dg/**", "**/CHANGELOG.md", "_work/**"]
 }

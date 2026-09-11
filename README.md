@@ -111,7 +111,7 @@ plugins:
       priority: 100
       obfuscate_tool_names: true
       inject_system_prompt: true
-      cache_breakpoints: true
+      cache_breakpoints: false
       fill_fingerprint: true
       surface: cli            # "cli" (default) or "sdk-cli"
 ```
@@ -122,7 +122,7 @@ plugins:
 |-----|---------|--------|
 | `obfuscate_tool_names` | `true` | Rename tools + reverse on responses/stream chunks. |
 | `inject_system_prompt` | `true` | 4-block surface-aware system rewrite; relocate original system into messages. |
-| `cache_breakpoints` | `true` | Ephemeral `cache_control` on the last tool. |
+| `cache_breakpoints` | `false` | Ephemeral `cache_control` on the last tool. OFF by default: CLI 2.1.268 sends none, so emitting one is a positive fingerprint discriminator. |
 | `fill_fingerprint` | `true` | Fill `temperature`/`max_tokens`/`context_management`. |
 | `surface` | `cli` | CLI entrypoint to impersonate: `cli` (interactive TUI, 11 betas) or `sdk-cli` (-p print, 10 betas). Unknown values are rejected at config load. |
 

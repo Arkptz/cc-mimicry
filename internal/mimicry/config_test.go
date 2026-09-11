@@ -22,20 +22,24 @@ func TestConfigureDefaultsAllOn(t *testing.T) {
 	for name, got := range map[string]bool{
 		"obfuscate_tool_names": cfg.ObfuscateToolNames,
 		"inject_system_prompt": cfg.InjectSystemPrompt,
-		"cache_breakpoints":    cfg.CacheBreakpoints,
 		"fill_fingerprint":     cfg.FillFingerprint,
 	} {
 		if !got {
 			t.Fatalf("default %s = false, want true", name)
 		}
 	}
+	// cache_breakpoints defaults OFF: the real CLI sends no cache_control on
+	// any tool, so emitting one would single the plugin out.
+	if cfg.CacheBreakpoints {
+		t.Fatal("default cache_breakpoints = true, want false")
+	}
 	if cfg.Surface != "cli" {
 		t.Fatalf("default surface = %q, want %q", cfg.Surface, "cli")
 	}
 }
 
-func TestConfigureOmittedKeyStaysDefaultTrue(t *testing.T) {
-	// Only one key set to false; the rest must remain default-true.
+func TestConfigureOmittedKeyStaysDefault(t *testing.T) {
+	// Only one key set to false; the rest must keep their defaults.
 	raw := lifecyclePayload(t, "obfuscate_tool_names: false\n")
 	if err := configure(raw); err != nil {
 		t.Fatalf("configure: %v", err)
@@ -44,8 +48,11 @@ func TestConfigureOmittedKeyStaysDefaultTrue(t *testing.T) {
 	if cfg.ObfuscateToolNames {
 		t.Fatal("obfuscate_tool_names should be false")
 	}
-	if !cfg.InjectSystemPrompt || !cfg.CacheBreakpoints || !cfg.FillFingerprint {
+	if !cfg.InjectSystemPrompt || !cfg.FillFingerprint {
 		t.Fatalf("omitted keys were zeroed instead of staying default-true: %+v", cfg)
+	}
+	if cfg.CacheBreakpoints {
+		t.Fatalf("omitted cache_breakpoints should stay default-false: %+v", cfg)
 	}
 	if cfg.Surface != "cli" {
 		t.Fatalf("omitted surface should default to cli, got %q", cfg.Surface)
