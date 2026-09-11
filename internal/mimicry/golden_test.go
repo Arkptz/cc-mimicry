@@ -20,6 +20,13 @@ var billingDynamicsRE = regexp.MustCompile(
 	`(cc_version=2\.1\.268\.)([A-Za-z0-9<>]+)`,
 )
 
+// captureDir is the fixture directory for the version the plugin impersonates.
+// Fixtures are grouped per CLI version with identical names inside each, so
+// retargeting a new version only changes cliTargetVersion.
+func captureDir() string {
+	return filepath.Join("..", "..", "testdata", "captures", "v"+cliTargetVersion)
+}
+
 // TestGoldenSystemBlocksMatchCaptures pins the plugin's 3-block output against
 // the on-disk mitmproxy captures of real Claude Code 2.1.268 traffic for both
 // surfaces. Every static field must match byte-for-byte; the two documented
@@ -37,11 +44,11 @@ func TestGoldenSystemBlocksMatchCaptures(t *testing.T) {
 		profile SurfaceProfile
 		file    string
 	}{
-		{"cli", CLISurface, "v2.1.268-cli-body.json"},
-		{"sdk-cli", SDKCLISurface, "v2.1.268-sdk-cli-body.json"},
+		{"cli", CLISurface, "cli-body.json"},
+		{"sdk-cli", SDKCLISurface, "sdk-cli-body.json"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join("..", "..", "testdata", "captures", tc.file)
+			path := filepath.Join(captureDir(), tc.file)
 			raw, err := os.ReadFile(path) //nolint:gosec // test-only, paths are hardcoded test fixtures
 			if err != nil {
 				t.Fatalf("read capture %s: %v", path, err)

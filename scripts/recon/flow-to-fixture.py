@@ -3,7 +3,7 @@
 
 Picks the /v1/messages request carrying the full system[] array (the CLI also
 emits smaller sidecar requests) and emits the same shape the existing
-v2.1.206-*.json fixtures use, with secrets stripped.
+v2.1.206/ fixtures use, with secrets stripped.
 
 Run under `nix shell nixpkgs#mitmproxy` so `mitmproxy.io` is importable.
 """

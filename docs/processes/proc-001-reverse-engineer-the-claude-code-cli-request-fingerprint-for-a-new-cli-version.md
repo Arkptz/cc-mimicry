@@ -64,13 +64,13 @@ At the end of this process the operator has:
 
 | Artifact | Location | Description |
 |---|---|---|
-| Sanitized capture fixture | `testdata/captures/v<VER>-<model>.json` | On-the-wire POST /v1/messages dump with all headers and body; secrets stripped. |
+| Sanitized capture fixture | `testdata/captures/v<VER>/<surface>-body.json` | On-the-wire POST /v1/messages dump with all headers and body; secrets stripped. |
 | Static strings excerpt | `/tmp/cc-strings.txt` (ephemeral) | Full `strings -n 6` output from the ELF; not committed. |
 | Delta summary | Mental note / ticket | List of fields that changed vs the previous version, scoped to fields the plugin or CPA actually control. |
 
 **Definition of done:**
 
-1. `testdata/captures/v<VER>-<surface>-body.json` exists for both surfaces and passes the secret-sanity grep (zero hits for token, device_id, session_id).
+1. `testdata/captures/v<VER>/<surface>-body.json` exists for both surfaces and passes the secret-sanity grep (zero hits for token, device_id, session_id).
 2. The operator can state for each fingerprint field: its current value, whether it is static or runtime-computed, and which layer (plugin vs CPA executor) owns it on the wire.
 3. No `mitmdump` process from the capture run is left listening.
 ## Roles and Responsibilities
@@ -189,7 +189,7 @@ Five sequential stages; each has a clear pass/fail gate before proceeding to the
    system blocks, and `capture-live.sh` refuses to write one containing the
    request's credential values. Confirm independently before committing:
    ```bash
-   grep -c "sk-ant-\|device_id" testdata/captures/v${VER}-*-body.json   # must be 0
+   grep -c "sk-ant-\|device_id" testdata/captures/v${VER}/*-body.json   # must be 0
    ```
    Note that the system prompt itself contains the words "authorization" and
    "Bearer", so grepping for header *names* gives false positives.
@@ -218,8 +218,8 @@ Five sequential stages; each has a clear pass/fail gate before proceeding to the
 5. **Step E — Diff and Decide.** Produce a concise delta summary.
 
    ```bash
-   PREV=testdata/captures/v<PREV_VER>-cli-body.json
-   NEW=testdata/captures/v${VER}-cli-body.json
+   PREV=testdata/captures/v<PREV_VER>/cli-body.json
+   NEW=testdata/captures/v${VER}/cli-body.json
 
    python3 -c "
    import json
@@ -245,7 +245,7 @@ Five sequential stages; each has a clear pass/fail gate before proceeding to the
    python3 -c "
    import json, sys
    for surface in ('cli', 'sdk-cli'):
-       with open(f'testdata/captures/v${VER}-{surface}-body.json') as f: d = json.load(f)
+       with open(f'testdata/captures/v${VER}/{surface}-body.json') as f: d = json.load(f)
        assert d.get('ua'), f'{surface}: missing ua'
        assert d.get('betas'), f'{surface}: missing betas'
        assert d['system_blocks'], f'{surface}: no system blocks'
@@ -253,7 +253,7 @@ Five sequential stages; each has a clear pass/fail gate before proceeding to the
    print('OK: fixtures complete')
    "
 
-   grep -c 'sk-ant-\|device_id' testdata/captures/v${VER}-*-body.json   # must be 0
+   grep -c 'sk-ant-\|device_id' testdata/captures/v${VER}/*-body.json   # must be 0
    pgrep -af mitmdump || echo "OK: no mitmdump procs"
    go test -race ./...
    ```
@@ -283,7 +283,7 @@ Five sequential stages; each has a clear pass/fail gate before proceeding to the
 |---|---|---|
 | Binary is stripped | `file` output contains "stripped" instead of "not stripped" | Static extraction still works for string literals; symbol names absent. Note in delta summary. No escalation needed. |
 | `cch` is no longer a static placeholder | Step B grep shows `6e52736ac806831e` / `59cf53e54c78` alongside a non-`00000` cch template | Port `scripts/recon/xxhash64.ts` logic; test against a live capture. Update this PROC's appendix. |
-| capture-live.sh exits with no fixture | No file at `testdata/captures/v<VER>-<surface>-body.json` | Inspect `_work/capture-<VER>/<surface>-{cli,mitm}.log`. A fresh workspace shows a "do you trust this folder?" prompt that swallows the typed prompt; the script answers it, but a changed dialog would break that again. |
+| capture-live.sh exits with no fixture | No file at `testdata/captures/v<VER>/<surface>-body.json` | Inspect `_work/capture-<VER>/<surface>-{cli,mitm}.log`. A fresh workspace shows a "do you trust this folder?" prompt that swallows the typed prompt; the script answers it, but a changed dialog would break that again. |
 | Fixture rejected for wrong entrypoint | `captured cc_entrypoint=… but --surface=…` | The CLI was driven in the wrong mode. `-p` is always sdk-cli; the cli surface needs the pty-driven TUI path. |
 | All requests get 401 | Fixture has `status: 401` in every captured request | The OAuth token has expired. Re-obtain from CPA container (see Prerequisites). The fingerprint headers are still visible in the 401 request — capture is still valid for header extraction. |
 | CPA source not available locally | No CPA git checkout for Step D | Use `git -C <cpa-dir> show <tag>:internal/runtime/executor/claude_executor.go` against a cached remote, or check the `.cpa-version` / `.cpa-commit` pinned in this repo and fetch that commit from the upstream CPA remote. |

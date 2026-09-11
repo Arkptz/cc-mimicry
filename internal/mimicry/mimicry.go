@@ -164,7 +164,7 @@ func hasClaudeCodePrefix(text string, profile SurfaceProfile) bool {
 //
 // 2.1.268 folded the former system[3] ("# Text output ...") into the intro block
 // and dropped the ttl/scope qualifiers from cache_control; see the captures under
-// testdata/captures/v2.1.268-*.
+// testdata/captures/v2.1.268/.
 func buildClaudeCodeSystemBlocks(profile SurfaceProfile) []byte {
 	billing := fmt.Sprintf(
 		"x-anthropic-billing-header: cc_version=%s.%s; cc_entrypoint=%s; cch=00000;",

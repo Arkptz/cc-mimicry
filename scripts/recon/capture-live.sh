@@ -13,7 +13,7 @@
 # CC_TOKEN_FILE (default: /var/lib/bifrost-vk/claude-code). Upstream defaults to
 # ANTHROPIC_BASE_URL, matching the local wrapper.
 #
-# Output: testdata/captures/v<VERSION>-<surface>-body.json, redacted.
+# Output: testdata/captures/v<VERSION>/<surface>-body.json, redacted.
 
 set -euo pipefail
 
@@ -75,7 +75,9 @@ UPSTREAM_ORIGIN=$(printf '%s' "$UPSTREAM" | sed -E 's#^(https?://[^/]+).*#\1#')
 UPSTREAM_PREFIX=$(printf '%s' "$UPSTREAM" | sed -E 's#^https?://[^/]+##; s#/$##')
 
 WORK_DIR="$REPO_ROOT/_work/capture-$VERSION"
-mkdir -p "$WORK_DIR" "$REPO_ROOT/testdata/captures"
+# Fixtures are grouped per CLI version, with identical file names inside each.
+CAPTURE_DIR="$REPO_ROOT/testdata/captures/v$VERSION"
+mkdir -p "$WORK_DIR" "$CAPTURE_DIR"
 
 # A python that can import mitmproxy, for the flow -> fixture conversion.
 PYTHON_MITM_EXPR=(--impure --expr "(import <nixpkgs> {}).python3.withPackages (ps: [ ps.mitmproxy ])")
@@ -168,7 +170,7 @@ capture_one() {
     return 1
   fi
 
-  local out="$REPO_ROOT/testdata/captures/v$VERSION-$surface-body.json"
+  local out="$CAPTURE_DIR/$surface-body.json"
   # The mitmproxy package ships its modules next to its own interpreter rather
   # than on the ambient sys.path, so run the converter with both taken from the
   # package itself.
@@ -206,5 +208,5 @@ for surface in $SURFACE_LIST; do
 done
 
 echo
-echo "captures written to testdata/captures/ for v$VERSION"
+echo "captures written to testdata/captures/v$VERSION/"
 echo "next: review the diff, then point golden_test.go at the new fixtures"

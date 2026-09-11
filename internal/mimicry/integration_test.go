@@ -56,7 +56,7 @@ func TestIntegrationFingerprintPipeline(t *testing.T) {
 		{
 			name:        "cli",
 			profile:     CLISurface,
-			capture:     "v2.1.268-cli-body.json",
+			capture:     "cli-body.json",
 			betaCount:   11,
 			betaMarker:  "redact-thinking-2026-02-12",
 			betaAntiTok: "",
@@ -64,7 +64,7 @@ func TestIntegrationFingerprintPipeline(t *testing.T) {
 		{
 			name:        "sdk-cli",
 			profile:     SDKCLISurface,
-			capture:     "v2.1.268-sdk-cli-body.json",
+			capture:     "sdk-cli-body.json",
 			betaCount:   10,
 			betaMarker:  "claude-code-20250219",
 			betaAntiTok: "redact-thinking-2026-02-12",
@@ -98,7 +98,7 @@ type captureSlot struct {
 
 func loadCapture(t *testing.T, name string) capture {
 	t.Helper()
-	path := filepath.Join("..", "..", "testdata", "captures", name)
+	path := filepath.Join(captureDir(), name)
 	raw, err := os.ReadFile(path) //nolint:gosec // test-only, paths are hardcoded test fixtures
 	if err != nil {
 		t.Fatalf("read capture %s: %v", path, err)
