@@ -34,7 +34,7 @@ This PROC is the repeatable recipe for extracting that fingerprint from any new 
 - `strings` (GNU binutils), `file`, `python3`, `pgrep`, `ss` available on PATH
 - Live OAuth access token (`sk-ant-oat01-…`) obtained from CPA container `/root/.cli-proxy-api/*.json` (pick one with `expired` > now and high tier e.g. `max_20x`)
 - `CLAUDE_CODE_OAUTH_TOKEN` exported in the shell
-- Repo scripts present: `scripts/recon/capture.ts`, `scripts/recon/check-binary.sh`, `scripts/recon/extract-cch.ts`, `scripts/recon/xxhash64.ts`
+- Repo scripts present: `scripts/recon/fetch-binary.sh`, `scripts/recon/capture-live.sh`, `scripts/recon/flow-to-fixture.py`, `scripts/recon/check-binary.sh`, `scripts/recon/extract-cch.ts`, `scripts/recon/xxhash64.ts`
 - Working directory is `/home/arkptz/git/mine/cc-mimicry`
 
 **Obtaining the OAuth token from the CPA container:**
@@ -51,8 +51,11 @@ cat /root/.cli-proxy-api/<file>.json | python3 -c \
 
 | File | Purpose |
 |---|---|
-| `scripts/recon/capture.ts` | Slim standalone Node proxy (port 18899) — the primary capture tool. No build artifacts needed. |
+| `scripts/recon/fetch-binary.sh` | Downloads the per-platform CLI package, verifies its npm sha512, unpacks the ELF. |
+| `scripts/recon/capture-live.sh` | The primary capture tool: mitmproxy reverse proxy + CLI driver, one fixture per surface. |
+| `scripts/recon/flow-to-fixture.py` | Converts a mitmproxy flow into a redacted `testdata/captures` fixture. |
 | `scripts/recon/check-binary.sh` | Quick ELF sanity check. |
+| `scripts/recon/capture.ts` | Legacy Node proxy (port 18899), superseded by `capture-live.sh`. |
 | `scripts/recon/intercept-claude.ts` | Legacy intercept helper (retained for reference). |
 | `scripts/recon/extract-cch.ts` | Extracts cch-related strings from ELF (legacy — cch is now a static placeholder). |
 | `scripts/recon/xxhash64.ts` | xxHash64 port (legacy — kept in case Anthropic re-enables dynamic cch). |
@@ -67,9 +70,9 @@ At the end of this process the operator has:
 
 **Definition of done:**
 
-1. `testdata/captures/v<VER>-<model>.json` exists and passes the secret-sanity grep (zero hits for token, device_id, session_id).
+1. `testdata/captures/v<VER>-<surface>-body.json` exists for both surfaces and passes the secret-sanity grep (zero hits for token, device_id, session_id).
 2. The operator can state for each fingerprint field: its current value, whether it is static or runtime-computed, and which layer (plugin vs CPA executor) owns it on the wire.
-3. Port 18899 is free and no `capture.ts` node process is running.
+3. No `mitmdump` process from the capture run is left listening.
 ## Roles and Responsibilities
 | Role | Responsibility | Owner |
 |---|---|---|
@@ -81,8 +84,8 @@ R = Responsible, C = Consulted, I = Informed.
 ## Process Flow
 ```mermaid
 flowchart LR
-    A[A: Fetch binary\nnpm/curl + verify ELF] --> B[B: Static extraction\nstrings + grep\nbeta table / cch strategy]
-    B --> C[C: Live capture\ncapture.ts proxy\nruntime headers + body]
+    A[A: Fetch binary\nfetch-binary.sh + verify ELF] --> B[B: Static extraction\nstrings + grep\nbeta table / cch strategy]
+    B --> C[C: Live capture\ncapture-live.sh mitmproxy\nruntime headers + body]
     C --> D[D: CPA-overlap check\ngit show executor\nCPA-owned vs plugin-owned]
     D --> E[E: Diff and decide\ndelta summary\ncommit sanitized fixture]
 ```
@@ -93,21 +96,19 @@ Five sequential stages; each has a clear pass/fail gate before proceeding to the
 
    ```bash
    npm view @anthropic-ai/claude-code dist-tags
-   # Example: { latest: '2.1.206', ... }
+   # Example: { latest: '2.1.268', ... }
 
-   VER=2.1.206   # set to the version you want to recon
+   VER=2.1.268   # set to the version you want to recon
 
-   curl -L "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-x64/-/claude-code-linux-x64-${VER}.tgz" \
-     -o /tmp/claude-${VER}.tgz
-   mkdir -p /tmp/claude-${VER}
-   tar -xzf /tmp/claude-${VER}.tgz -C /tmp/claude-${VER}
-
-   # Binary is at package/claude — NOT package/cli (common mistake)
-   CLAUDE_BIN=/tmp/claude-${VER}/package/claude
-   chmod +x "$CLAUDE_BIN"
-   file "$CLAUDE_BIN"          # Expected: ELF 64-bit … not stripped
-   "$CLAUDE_BIN" --version     # Expected: 2.1.206
+   # Downloads the per-platform package, verifies its npm sha512, and unpacks
+   # to _work/claude-$VER/claude.
+   scripts/recon/fetch-binary.sh "$VER"
+   CLAUDE_BIN="_work/claude-${VER}/claude"
    ```
+
+   The wrapper package `@anthropic-ai/claude-code` no longer contains a binary:
+   since 2.1.x it ships `install.cjs` plus a stub, and the native executable
+   lives in `@anthropic-ai/claude-code-linux-x64` (an optionalDependency).
 
    **Gate:** `file` says "not stripped"; `--version` matches `$VER`.
 
@@ -151,14 +152,26 @@ Five sequential stages; each has a clear pass/fail gate before proceeding to the
 3. **Step C — Live Capture** (runtime-computed values + on-the-wire truth).
 
    ```bash
-   echo "$CLAUDE_CODE_OAUTH_TOKEN" | head -c 20   # must start with sk-ant-oat01-
-
-   CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN" \
-   CLAUDE_BIN="$CLAUDE_BIN" \
-   node --experimental-strip-types scripts/recon/capture.ts \
-     --model claude-fable-5 \
-     --output testdata/captures/v${VER}-fable5.json
+   # Runs mitmproxy in reverse-proxy mode in front of the upstream, drives the
+   # CLI through it, and writes redacted fixtures for both surfaces.
+   scripts/recon/capture-live.sh --version "$VER" --surface both
+   # Non-default upstream (e.g. a relay): --upstream https://host[/prefix]
    ```
+
+   The surface is decided by how the CLI is driven, not by an env var: `-p`
+   (print) always reports `cc_entrypoint=sdk-cli`, so the `cli` surface is
+   captured by driving the TUI through a pty. The script does both and refuses
+   to write a fixture whose `cc_entrypoint` disagrees with `--surface`.
+
+   **GOTCHA — capture environment leaks into the beta set:** tokens gated on the
+   auth mode (`oauth-*`) or on account entitlements are absent when capturing
+   through a relay or an API key. Treat the capture's `anthropic-beta` as a
+   subset, and confirm the full set against the binary's strings (Step B).
+
+   **GOTCHA — `cch` only appears for firstParty auth:** the CLI emits
+   ` cch=00000;` only when the account is firstParty (or vertex), so a relay
+   capture has no `cch` segment at all. The plugin still emits the placeholder,
+   which CPA rewrites downstream.
 
    **GOTCHA — title-generation sidecar:** CLI sends a secondary request with a dummy `x-api-key` → 401 from api.anthropic.com. Primary fingerprint is still fully captured; the 401 is expected and harmless.
 
@@ -172,24 +185,14 @@ Five sequential stages; each has a clear pass/fail gate before proceeding to the
        cch signing (no-op: cch=00000)
    ```
 
-   **Sanitize before committing:**
+   **Verify the redaction:** the fixture only carries `ua`, `betas` and the
+   system blocks, and `capture-live.sh` refuses to write one containing the
+   request's credential values. Confirm independently before committing:
    ```bash
-   python3 -c "
-   import json
-   with open('testdata/captures/v${VER}-fable5.json') as f:
-       d = json.load(f)
-   for h in list(d.get('headers', {})):
-       if h.lower() in ('x-api-key', 'authorization'):
-           d['headers'][h] = 'REDACTED'
-   for key in ('device_id', 'session_id'):
-       if key in d:
-           d[key] = 'REDACTED'
-   with open('testdata/captures/v${VER}-fable5.json', 'w') as f:
-       json.dump(d, f, indent=2)
-   "
-   grep -c "sk-ant-oat01" testdata/captures/v${VER}-fable5.json   # must be 0
-   grep -c "device_id"    testdata/captures/v${VER}-fable5.json   # must be 0
+   grep -c "sk-ant-\|device_id" testdata/captures/v${VER}-*-body.json   # must be 0
    ```
+   Note that the system prompt itself contains the words "authorization" and
+   "Bearer", so grepping for header *names* gives false positives.
 
    **Gate:** fixture exists; `user-agent`, `anthropic-beta`, billing header non-empty; secret grep counts = 0.
 
@@ -215,19 +218,19 @@ Five sequential stages; each has a clear pass/fail gate before proceeding to the
 5. **Step E — Diff and Decide.** Produce a concise delta summary.
 
    ```bash
-   PREV=testdata/captures/v<PREV_VER>-fable5.json
-   NEW=testdata/captures/v${VER}-fable5.json
+   PREV=testdata/captures/v<PREV_VER>-cli-body.json
+   NEW=testdata/captures/v${VER}-cli-body.json
 
    python3 -c "
    import json
    with open('$PREV') as f: prev = json.load(f)
    with open('$NEW')  as f: new  = json.load(f)
-   pb = set(prev.get('betas', [])); nb = set(new.get('betas', []))
+   pb = set((prev.get('betas') or '').split(',')); nb = set((new.get('betas') or '').split(','))
    print('Added:',   nb - pb)
    print('Removed:', pb - nb)
-   pu = prev.get('headers', {}).get('user-agent', '')
-   nu = new.get('headers',  {}).get('user-agent', '')
-   if pu != nu: print(f'UA changed: {pu!r} → {nu!r}')
+   if prev.get('ua') != new.get('ua'):
+       print(f\"UA changed: {prev.get('ua')!r} -> {new.get('ua')!r}\")
+   print('block count:', len(prev['system_blocks']), '->', len(new['system_blocks']))
    "
    ```
 
@@ -240,29 +243,38 @@ Five sequential stages; each has a clear pass/fail gate before proceeding to the
    "$CLAUDE_BIN" --version | grep -q "$VER" && echo "OK" || echo "FAIL: version mismatch"
 
    python3 -c "
-   import json
-   with open('testdata/captures/v${VER}-fable5.json') as f: d = json.load(f)
-   assert d.get('headers', {}).get('user-agent'), 'missing user-agent'
-   assert d.get('betas') or d.get('headers', {}).get('anthropic-beta'), 'missing betas'
-   print('OK: fixture complete')
+   import json, sys
+   for surface in ('cli', 'sdk-cli'):
+       with open(f'testdata/captures/v${VER}-{surface}-body.json') as f: d = json.load(f)
+       assert d.get('ua'), f'{surface}: missing ua'
+       assert d.get('betas'), f'{surface}: missing betas'
+       assert d['system_blocks'], f'{surface}: no system blocks'
+       assert f'cc_entrypoint={surface};' in d['system_blocks'][0]['text'], f'{surface}: wrong entrypoint'
+   print('OK: fixtures complete')
    "
 
-   grep -c 'sk-ant-oat01' testdata/captures/v${VER}-fable5.json   # must be 0
-   grep -c 'device_id'    testdata/captures/v${VER}-fable5.json   # must be 0
-   pgrep -af "capture.ts" || echo "OK: no capture.ts procs"
-   ss -ltn | grep -q ":18899" && echo "WARN: port 18899 bound" || echo "OK"
+   grep -c 'sk-ant-\|device_id' testdata/captures/v${VER}-*-body.json   # must be 0
+   pgrep -af mitmdump || echo "OK: no mitmdump procs"
+   go test -race ./...
    ```
 
-7. **Appendix — Known Values as of v2.1.206** (baseline for future diffs; update each run):
+7. **Appendix — Known Values as of v2.1.268** (baseline for future diffs; update each run):
 
    | Field | Value | Static/Runtime | Owned by |
    |---|---|---|---|
-   | `user-agent` | `claude-cli/2.1.206 (external, sdk-cli)` | Runtime (version substituted) | CPA executor |
+   | `user-agent` | `claude-cli/2.1.268 (external, sdk-cli)` | Runtime (version substituted) | CPA executor |
    | `x-stainless-package-version` | `0.94.0` | Static | CPA executor |
    | `anthropic-version` | `2023-06-01` | Static | CPA executor |
    | `x-app` | `cli` | Static | CPA executor |
-   | `x-anthropic-billing-header` | `cc_version=2.1.206.855; cc_entrypoint=sdk-cli;` | Runtime (`cch=` omitted on sdk-cli entrypoint) | CPA executor |
+   | `x-anthropic-billing-header` | `cc_version=2.1.268.<buildhash>; cc_entrypoint=<surface>;` | Runtime (`cch=` only for firstParty/vertex auth) | CPA executor |
    | `cch` component | `cch=00000` (static placeholder, NOT recomputed) | Static | CPA executor |
+
+   System prompt layout changed in 2.1.268: the array is **3 blocks**, not 4.
+   The former `system[3]` (`# Text output …`) is now part of the intro block,
+   and `cache_control` is a bare `{"type":"ephemeral"}` on blocks 1 and 2 — the
+   `ttl: 1h` / `scope: global` qualifiers of 2.1.206 are gone. Optional billing
+   segments seen in the binary: `cc_workload`, `cc_is_subagent`, `cc_prev_req`,
+   `cc_prompt_id`.
 
    On-the-wire `anthropic-beta` tokens (9 total, all CPA-owned via `applyClaudeHeaders`):
    `claude-code-20250219`, `interleaved-thinking-2025-05-14`, `thinking-token-count-2026-05-13`, `context-management-2025-06-27`, `prompt-caching-scope-2026-01-05`, `mid-conversation-system-2026-04-07`, `advisor-tool-2026-03-01`, `effort-2025-11-24`, `structured-outputs-2025-12-15`.
@@ -271,7 +283,8 @@ Five sequential stages; each has a clear pass/fail gate before proceeding to the
 |---|---|---|
 | Binary is stripped | `file` output contains "stripped" instead of "not stripped" | Static extraction still works for string literals; symbol names absent. Note in delta summary. No escalation needed. |
 | `cch` is no longer a static placeholder | Step B grep shows `6e52736ac806831e` / `59cf53e54c78` alongside a non-`00000` cch template | Port `scripts/recon/xxhash64.ts` logic; test against a live capture. Update this PROC's appendix. |
-| capture.ts exits with no fixture | No file at `testdata/captures/v<VER>-fable5.json` after the script completes | Check Node version (`node --version` ≥ 22); confirm `CLAUDE_CODE_OAUTH_TOKEN` is exported and non-expired; check `ss -ltn | grep 18899` (port conflict); inspect script stderr. |
+| capture-live.sh exits with no fixture | No file at `testdata/captures/v<VER>-<surface>-body.json` | Inspect `_work/capture-<VER>/<surface>-{cli,mitm}.log`. A fresh workspace shows a "do you trust this folder?" prompt that swallows the typed prompt; the script answers it, but a changed dialog would break that again. |
+| Fixture rejected for wrong entrypoint | `captured cc_entrypoint=… but --surface=…` | The CLI was driven in the wrong mode. `-p` is always sdk-cli; the cli surface needs the pty-driven TUI path. |
 | All requests get 401 | Fixture has `status: 401` in every captured request | The OAuth token has expired. Re-obtain from CPA container (see Prerequisites). The fingerprint headers are still visible in the 401 request — capture is still valid for header extraction. |
 | CPA source not available locally | No CPA git checkout for Step D | Use `git -C <cpa-dir> show <tag>:internal/runtime/executor/claude_executor.go` against a cached remote, or check the `.cpa-version` / `.cpa-commit` pinned in this repo and fetch that commit from the upstream CPA remote. |
 | Port 18899 already in use | `capture.ts` exits immediately with `EADDRINUSE` | Kill the conflicting process: `fuser -k 18899/tcp`, then retry. |
@@ -287,3 +300,4 @@ Five sequential stages; each has a clear pass/fail gate before proceeding to the
 | Date | Author | Changes |
 |---|---|---|
 | 2026-07-10 | @arkptz | Initial version. Verified against CLI v2.1.206. Documents Steps A–E, CPA-overlap check, cch=static finding, pipeline order gotcha, and known values appendix. |
+| 2026-09-11 | @arkptz | Re-run against CLI v2.1.268. Step A now uses `scripts/recon/fetch-binary.sh` (the wrapper npm package no longer ships a binary); Step C uses `scripts/recon/capture-live.sh` (mitmproxy reverse proxy, pty for the cli surface). Records the 4→3 system-block change, the dropped cache_control ttl/scope, and the firstParty-only `cch`. |

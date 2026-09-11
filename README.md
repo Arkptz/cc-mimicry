@@ -26,11 +26,11 @@ Applied to Anthropic `/v1/messages` requests (source format `claude`/`anthropic`
      `<prefix><name[:3]><NN>`. Not md5 — the aliases stay human-readable.
    - *Server tools* (`web_search_20250305`, `computer_20250124`, …) are never
      renamed, since those names are Anthropic protocol semantics.
-2. **System prompt 4-block rewrite** — rebuilds `system` into the CLI 2.1.206 shape:
+2. **System prompt 3-block rewrite** — rebuilds `system` into the CLI 2.1.268 shape:
    `[0]` billing attribution (`cch=00000` placeholder for CPA signing),
-   `[1]` surface-specific agent identity,
-   `[2]` shared intro/security/tone bundle (cache scope=global, ttl=1h),
-   `[3]` surface-specific `# Text output` section (cache ttl=1h).
+   `[1]` surface-specific agent identity (cache ephemeral),
+   `[2]` shared intro/security/tone bundle, which since 2.1.268 also carries the
+   `# Text output` section that used to be a fourth block (cache ephemeral).
    The original system prompt is relocated into a `user`/`assistant` message pair
    so the model still receives the caller's instructions. Skipped if `system`
    already looks like Claude Code.

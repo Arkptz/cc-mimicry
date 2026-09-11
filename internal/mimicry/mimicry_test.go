@@ -143,11 +143,11 @@ func TestStaticReverseIsUnconditional(t *testing.T) {
 	}
 }
 
-// TestSystemRewriteFourBlocks pins the 4-block surface-aware system[] output:
-// [0] billing block, [1] agent identity, [2] shared intro (cache_control global),
-// [3] TextOutputSection (cache_control), and the original system relocated into
+// TestSystemRewriteThreeBlocks pins the 3-block surface-aware system[] output:
+// [0] billing block, [1] agent identity, [2] shared intro (which since 2.1.268
+// carries the former TextOutputSection), and the original system relocated into
 // messages head.
-func TestSystemRewriteFourBlocks(t *testing.T) {
+func TestSystemRewriteThreeBlocks(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		profile SurfaceProfile
@@ -159,11 +159,11 @@ func TestSystemRewriteFourBlocks(t *testing.T) {
 			body := []byte(`{"model":"claude-sonnet-4","system":"Be helpful.","messages":[{"role":"user","content":"hi"}]}`)
 			out := rewriteSystemForClaudeCode(body, tc.profile)
 			sys := gjson.GetBytes(out, "system")
-			if !sys.IsArray() || len(sys.Array()) != 4 {
-				t.Fatalf("expected 4 system blocks, got: %s", sys.Raw)
+			if !sys.IsArray() || len(sys.Array()) != 3 {
+				t.Fatalf("expected 3 system blocks, got: %s", sys.Raw)
 			}
 			billing := sys.Array()[0].Get("text").String()
-			if !strings.HasPrefix(billing, "x-anthropic-billing-header: cc_version=2.1.206.") {
+			if !strings.HasPrefix(billing, "x-anthropic-billing-header: cc_version=2.1.268.") {
 				t.Fatalf("[0] wrong billing prefix: %q", billing)
 			}
 			if !strings.Contains(billing, "cc_entrypoint="+tc.profile.Entrypoint+";") ||
@@ -176,16 +176,15 @@ func TestSystemRewriteFourBlocks(t *testing.T) {
 			if got := sys.Array()[1].Get("text").String(); got != tc.profile.AgentIdentifier {
 				t.Fatalf("[1] agent identifier mismatch: %q vs %q", got, tc.profile.AgentIdentifier)
 			}
-			if sys.Array()[1].Get("cache_control").Exists() {
-				t.Fatalf("[1] must not have cache_control: %s", sys.Array()[1].Raw)
-			}
-			if sys.Array()[2].Get("cache_control.type").String() != "ephemeral" ||
-				sys.Array()[2].Get("cache_control.scope").String() != "global" {
-				t.Fatalf("[2] wrong cache_control: %s", sys.Array()[2].Raw)
-			}
-			if sys.Array()[3].Get("cache_control.type").String() != "ephemeral" ||
-				sys.Array()[3].Get("cache_control.scope").Exists() {
-				t.Fatalf("[3] wrong cache_control: %s", sys.Array()[3].Raw)
+			// 2.1.268 caches both the identity and the intro block, with a bare
+			// ephemeral marker: the ttl/scope qualifiers of 2.1.206 are gone.
+			for _, idx := range []int{1, 2} {
+				block := sys.Array()[idx]
+				if block.Get("cache_control.type").String() != "ephemeral" ||
+					block.Get("cache_control.scope").Exists() ||
+					block.Get("cache_control.ttl").Exists() {
+					t.Fatalf("[%d] wrong cache_control: %s", idx, block.Raw)
+				}
 			}
 			// Original system relocated into messages head.
 			first := gjson.GetBytes(out, "messages.0")

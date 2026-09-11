@@ -56,7 +56,7 @@ func TestIntegrationFingerprintPipeline(t *testing.T) {
 		{
 			name:        "cli",
 			profile:     CLISurface,
-			capture:     "v2.1.206-cli-body.json",
+			capture:     "v2.1.268-cli-body.json",
 			betaCount:   11,
 			betaMarker:  "redact-thinking-2026-02-12",
 			betaAntiTok: "",
@@ -64,7 +64,7 @@ func TestIntegrationFingerprintPipeline(t *testing.T) {
 		{
 			name:        "sdk-cli",
 			profile:     SDKCLISurface,
-			capture:     "v2.1.206-interactive-body.json",
+			capture:     "v2.1.268-sdk-cli-body.json",
 			betaCount:   10,
 			betaMarker:  "claude-code-20250219",
 			betaAntiTok: "redact-thinking-2026-02-12",
@@ -107,8 +107,8 @@ func loadCapture(t *testing.T, name string) capture {
 	if err := json.Unmarshal(raw, &c); err != nil {
 		t.Fatalf("unmarshal capture %s: %v", path, err)
 	}
-	if len(c.Sys) != 4 {
-		t.Fatalf("%s: capture has %d system blocks, want 4", name, len(c.Sys))
+	if len(c.Sys) != 3 {
+		t.Fatalf("%s: capture has %d system blocks, want 3", name, len(c.Sys))
 	}
 	return c
 }
@@ -126,8 +126,8 @@ func assertBodyPipeline(t *testing.T, tc integrationCase, capt capture) {
 	if err := json.Unmarshal(raw, &blocks); err != nil {
 		t.Fatalf("unmarshal built blocks: %v", err)
 	}
-	if len(blocks) != 4 {
-		t.Fatalf("built %d system blocks, want 4", len(blocks))
+	if len(blocks) != 3 {
+		t.Fatalf("built %d system blocks, want 3", len(blocks))
 	}
 
 	for i, b := range blocks {
@@ -160,32 +160,27 @@ func assertBodyPipeline(t *testing.T, tc integrationCase, capt capture) {
 	if sys1 != capt.Sys[1].Text {
 		t.Errorf("system[1] disagrees with capture: got %q want %q", sys1, capt.Sys[1].Text)
 	}
-	if cc := blocks[1]["cache_control"]; cc != nil {
-		t.Errorf("system[1] cache_control = %v, want absent", cc)
-	}
+	assertEphemeral(t, blocks[1]["cache_control"], "")
 
-	// system[2] — shared intro with ephemeral/1h/global cache_control. Compare
-	// against the capture's actual text length (the capture's "len" metadata
-	// field is a stale recon note; the golden byte-compare in
-	// TestGoldenSystemBlocksMatchCaptures is authoritative on the text itself).
+	// system[2] — shared intro, ephemeral cache_control. The capture continues
+	// past the plugin's static text with the client-dynamic session tail, so
+	// compare against that prefix; the golden byte-compare in
+	// TestGoldenSystemBlocksMatchCaptures is authoritative on the text itself.
 	sys2, _ := blocks[2]["text"].(string)
-	if len(sys2) != len(capt.Sys[2].Text) {
-		t.Errorf("system[2] len = %d, want %d (shared intro, surface-invariant)", len(sys2), len(capt.Sys[2].Text))
+	wantIntro := staticIntroPrefix(capt.Sys[2].Text)
+	if len(sys2) != len(wantIntro) {
+		t.Errorf("system[2] len = %d, want %d (shared intro, surface-invariant)", len(sys2), len(wantIntro))
 	}
-	assertEphemeral(t, blocks[2]["cache_control"], "global")
-
-	// system[3] — surface TextOutputSection, starts with "# Text output".
-	sys3, _ := blocks[3]["text"].(string)
-	const sys3Prefix = "# Text output"
-	if !strings.HasPrefix(sys3, sys3Prefix) {
-		t.Errorf("system[3] does not start with %q: %q", sys3Prefix, snippet(sys3))
+	// Since 2.1.268 the "# Text output" section is part of this block.
+	if !strings.Contains(sys2, "# Text output") {
+		t.Errorf("system[2] missing the %q section: %q", "# Text output", snippet(sys2))
 	}
-	assertEphemeral(t, blocks[3]["cache_control"], "")
+	assertEphemeral(t, blocks[2]["cache_control"], "")
 }
 
-// assertEphemeral verifies the cache_control block shape the real CLI emits:
-// {"type":"ephemeral","ttl":"1h"} for system[3], plus "scope":"global" for
-// system[2]. wantScope="" means no scope key must be present.
+// assertEphemeral verifies the cache_control block shape the real CLI emits.
+// Since 2.1.268 that is a bare {"type":"ephemeral"} — the ttl/scope qualifiers
+// the 2.1.206 captures carried are gone. wantScope="" means no scope key.
 func assertEphemeral(t *testing.T, ccAny any, wantScope string) {
 	t.Helper()
 	cc, ok := ccAny.(map[string]any)
@@ -194,9 +189,6 @@ func assertEphemeral(t *testing.T, ccAny any, wantScope string) {
 	}
 	if cc["type"] != "ephemeral" {
 		t.Errorf("cache_control.type = %v, want %q", cc["type"], "ephemeral")
-	}
-	if cc["ttl"] != "1h" {
-		t.Errorf("cache_control.ttl = %v, want %q", cc["ttl"], "1h")
 	}
 	if wantScope == "" {
 		if _, has := cc["scope"]; has {
@@ -218,7 +210,7 @@ func assertHeaderPipeline(t *testing.T, tc integrationCase, capt capture) {
 	resp := buildEgressHeaderResponse(tc.profile)
 	h := resp.Headers
 
-	wantUA := "claude-cli/2.1.206 (external, " + tc.profile.Entrypoint + ")"
+	wantUA := "claude-cli/2.1.268 (external, " + tc.profile.Entrypoint + ")"
 	if got := h.Get("User-Agent"); got != wantUA {
 		t.Errorf("User-Agent = %q, want %q", got, wantUA)
 	}
@@ -237,8 +229,18 @@ func assertHeaderPipeline(t *testing.T, tc integrationCase, capt capture) {
 	if tc.betaAntiTok != "" && containsToken(tokens, tc.betaAntiTok) {
 		t.Errorf("Anthropic-Beta MUST NOT contain %q on %s: %v", tc.betaAntiTok, tc.name, tokens)
 	}
-	if capt.Betas != "" && beta != capt.Betas {
-		t.Errorf("Anthropic-Beta disagrees with capture:\n got: %q\nwant: %q", beta, capt.Betas)
+	// The capture's beta set is a subset of the profile's: tokens gated on the
+	// auth mode (oauth-*) or on account entitlements are absent when the capture
+	// is taken through a relay. Every token the real CLI did send must still be
+	// one the plugin sends.
+	for token := range strings.SplitSeq(capt.Betas, ",") {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			continue
+		}
+		if !containsToken(tokens, token) {
+			t.Errorf("Anthropic-Beta missing %q, which the capture carried: %q", token, beta)
+		}
 	}
 
 	// Shared x-stainless-* + browser-access + x-app. Same tuple for both

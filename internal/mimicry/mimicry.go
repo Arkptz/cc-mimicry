@@ -17,7 +17,7 @@ const (
 
 	// cliTargetVersion is the impersonation target version. Real CLI captures
 	// used to derive the surface profiles were taken at exactly this version.
-	cliTargetVersion = "2.1.206"
+	cliTargetVersion = "2.1.268"
 
 	// billingBuildhashSalt is the deterministic salt fed into sha256 to derive
 	// the placeholder "buildhash" segment of the billing block. CPA strips /
@@ -158,9 +158,13 @@ func hasClaudeCodePrefix(text string, profile SurfaceProfile) bool {
 	return strings.HasPrefix(t, strings.TrimSpace(profile.AgentIdentifier))
 }
 
-// buildClaudeCodeSystemBlocks returns the raw JSON array for the 4-block system.
+// buildClaudeCodeSystemBlocks returns the raw JSON array for the 3-block system.
 // The cch=00000 tail on block[0] is a PLACEHOLDER: CPA's signAnthropicMessagesBody
 // pattern-matches "cch=<5hex>" and rewrites it with the real xxHash64 downstream.
+//
+// 2.1.268 folded the former system[3] ("# Text output ...") into the intro block
+// and dropped the ttl/scope qualifiers from cache_control; see the captures under
+// testdata/captures/v2.1.268-*.
 func buildClaudeCodeSystemBlocks(profile SurfaceProfile) []byte {
 	billing := fmt.Sprintf(
 		"x-anthropic-billing-header: cc_version=%s.%s; cc_entrypoint=%s; cch=00000;",
@@ -173,9 +177,8 @@ func buildClaudeCodeSystemBlocks(profile SurfaceProfile) []byte {
 	// scaffold via sjson cannot fail for these fixed paths and valid JSON inputs.
 	arr := `[]`
 	arr, _ = sjson.SetRaw(arr, "-1", jsonTextBlockRaw(billing, ""))
-	arr, _ = sjson.SetRaw(arr, "-1", jsonTextBlockRaw(profile.AgentIdentifier, ""))
-	arr, _ = sjson.SetRaw(arr, "-1", jsonTextBlockRaw(sharedSystemIntro, `{"type":"ephemeral","ttl":"1h","scope":"global"}`))
-	arr, _ = sjson.SetRaw(arr, "-1", jsonTextBlockRaw(profile.TextOutputSection, `{"type":"ephemeral","ttl":"1h"}`))
+	arr, _ = sjson.SetRaw(arr, "-1", jsonTextBlockRaw(profile.AgentIdentifier, `{"type":"ephemeral"}`))
+	arr, _ = sjson.SetRaw(arr, "-1", jsonTextBlockRaw(sharedSystemIntro, `{"type":"ephemeral"}`))
 	return []byte(arr)
 }
 

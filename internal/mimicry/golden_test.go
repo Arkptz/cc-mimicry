@@ -17,29 +17,28 @@ import (
 // deterministic placeholders; the capture carries either the real values or the
 // "<DYNAMIC>" redaction. We normalise both sides before comparison.
 var billingDynamicsRE = regexp.MustCompile(
-	`(cc_version=2\.1\.206\.)([A-Za-z0-9<>]+)(; cc_entrypoint=[a-z-]+; cch=)([A-Za-z0-9<>]+)`,
+	`(cc_version=2\.1\.268\.)([A-Za-z0-9<>]+)`,
 )
 
-// TestGoldenSystemBlocksMatchCaptures pins the plugin's 4-block output against
-// the on-disk mitmproxy captures of real Claude Code 2.1.206 traffic for both
+// TestGoldenSystemBlocksMatchCaptures pins the plugin's 3-block output against
+// the on-disk mitmproxy captures of real Claude Code 2.1.268 traffic for both
 // surfaces. Every static field must match byte-for-byte; the two documented
 // dynamic tails are stripped before comparison:
 //
 //   - system[0].text: the "cch=<hex>" tail is CPA-signed downstream. The plugin
-//     emits the placeholder "cch=00000;" and the capture's "cch=<DYNAMIC>;" is
-//     the redacted per-request signature. We normalise both to the same value.
-//   - system[3].text: the plugin owns only the STATIC prefix (through
-//     "# Text output ..."); the capture continues with client-dynamic
-//     "# Session-specific guidance" and later sections. We compare only the
-//     shared static prefix.
+//     emits the placeholder "cch=00000;"; the capture omits the segment entirely
+//     because the CLI only emits it for firstParty auth. We normalise both.
+//   - system[2].text: the plugin owns only the STATIC prefix; the capture
+//     continues with client-dynamic "# Session-specific guidance" and later
+//     sections. We compare only the shared static prefix.
 func TestGoldenSystemBlocksMatchCaptures(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		profile SurfaceProfile
 		file    string
 	}{
-		{"cli", CLISurface, "v2.1.206-cli-body.json"},
-		{"sdk-cli", SDKCLISurface, "v2.1.206-interactive-body.json"},
+		{"cli", CLISurface, "v2.1.268-cli-body.json"},
+		{"sdk-cli", SDKCLISurface, "v2.1.268-sdk-cli-body.json"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join("..", "..", "testdata", "captures", tc.file)
@@ -53,8 +52,8 @@ func TestGoldenSystemBlocksMatchCaptures(t *testing.T) {
 			if err := json.Unmarshal(blocks, &got); err != nil {
 				t.Fatalf("unmarshal built blocks: %v", err)
 			}
-			if len(got) != 4 {
-				t.Fatalf("built %d system blocks, want 4", len(got))
+			if len(got) != 3 {
+				t.Fatalf("built %d system blocks, want 3", len(got))
 			}
 
 			gjson.GetBytes(raw, "system_blocks").ForEach(func(_, item gjson.Result) bool {
@@ -70,8 +69,8 @@ func TestGoldenSystemBlocksMatchCaptures(t *testing.T) {
 					gotText = normaliseCchTail(gotText)
 					wantText = normaliseCchTail(wantText)
 				}
-				if idx == 3 {
-					wantText = staticSys3Prefix(wantText)
+				if idx == 2 {
+					wantText = staticIntroPrefix(wantText)
 				}
 
 				if gotText != wantText {
@@ -88,27 +87,34 @@ func TestGoldenSystemBlocksMatchCaptures(t *testing.T) {
 	}
 }
 
-// normaliseCchTail replaces the buildhash and cch=<hex>; tail with fixed
-// placeholders so the CPA signature (or the capture's <DYNAMIC> redaction) and
-// the drifted 2.1.206 buildhash algorithm (U3) do not defeat the byte compare.
-// Everything else on the billing line is compared as-is.
+// normaliseCchTail rewrites the two dynamic segments of the billing line to
+// fixed placeholders: the buildhash after cc_version=<ver>. and the cch= tail.
+// The plugin always emits "cch=00000;", while a capture carries the real value,
+// the "<DYNAMIC>" redaction, or nothing at all — the CLI only sends cch for
+// firstParty auth, so a capture taken through a relay has no cch segment.
 func normaliseCchTail(text string) string {
-	text = billingDynamicsRE.ReplaceAllString(text, "${1}XXX${3}00000")
+	text = billingDynamicsRE.ReplaceAllString(text, "${1}XXX")
+	// Drop the optional cch segment so a relay capture (which has none) and the
+	// plugin's "cch=00000;" placeholder compare equal.
+	if before, _, found := strings.Cut(text, " cch="); found {
+		text = strings.TrimRight(before, " ")
+	}
 	if !strings.HasSuffix(text, ";") {
 		text += ";"
 	}
 	return text
 }
 
-// staticSys3Prefix returns the STATIC prefix of system[3] up to (but excluding)
-// the "# Session-specific guidance" client-dynamic tail. Whitespace before the
-// marker is trimmed to keep the compare stable across newline drift.
-func staticSys3Prefix(text string) string {
+// staticIntroPrefix returns the STATIC prefix of the intro block up to (but
+// excluding) the "# Session-specific guidance" client-dynamic tail. The blank
+// line separating the two is part of the static text the plugin emits, so it is
+// kept rather than trimmed.
+func staticIntroPrefix(text string) string {
 	before, _, found := strings.Cut(text, "# Session-specific guidance")
 	if !found {
 		return text
 	}
-	return strings.TrimRight(before, "\n")
+	return before
 }
 
 func assertCacheControl(t *testing.T, idx int, surface string, got map[string]any, want gjson.Result) {

@@ -146,11 +146,11 @@ func TestInterceptRequestBeforeEmitsSurfaceBillingBlock(t *testing.T) {
 			}
 
 			sys := gjson.GetBytes(resp.Body, "system")
-			if !sys.IsArray() || len(sys.Array()) != 4 {
-				t.Fatalf("expected 4 system blocks, got: %s", sys.Raw)
+			if !sys.IsArray() || len(sys.Array()) != 3 {
+				t.Fatalf("expected 3 system blocks, got: %s", sys.Raw)
 			}
 			billing := sys.Array()[0].Get("text").String()
-			wantPrefix := "x-anthropic-billing-header: cc_version=2.1.206."
+			wantPrefix := "x-anthropic-billing-header: cc_version=2.1.268."
 			if !strings.HasPrefix(billing, wantPrefix) {
 				t.Fatalf("billing block missing prefix: %q", billing)
 			}
