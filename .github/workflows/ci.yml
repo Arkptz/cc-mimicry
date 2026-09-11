@@ -50,7 +50,7 @@ jobs:
           CPA_VERSION=$(cat .cpa-version)
           CPA_COMMIT=$(cat .cpa-commit)
           git clone --depth 1 --branch "$CPA_VERSION" \
-            https://github.com/router-for-me/CLIProxyAPI.git "$GITHUB_WORKSPACE/../CLIProxyAPI"
+            https://github.com/Arkptz/CLIProxyAPI.git "$GITHUB_WORKSPACE/../CLIProxyAPI"
           ACTUAL=$(git -C "$GITHUB_WORKSPACE/../CLIProxyAPI" rev-parse HEAD)
           if [ "$ACTUAL" != "$CPA_COMMIT" ]; then
             echo "::error::CPA SDK tag $CPA_VERSION resolved to $ACTUAL, expected pinned SHA $CPA_COMMIT"
@@ -78,7 +78,7 @@ jobs:
           CPA_VERSION=$(cat .cpa-version)
           CPA_COMMIT=$(cat .cpa-commit)
           git clone --depth 1 --branch "$CPA_VERSION" \
-            https://github.com/router-for-me/CLIProxyAPI.git "$GITHUB_WORKSPACE/../CLIProxyAPI"
+            https://github.com/Arkptz/CLIProxyAPI.git "$GITHUB_WORKSPACE/../CLIProxyAPI"
           ACTUAL=$(git -C "$GITHUB_WORKSPACE/../CLIProxyAPI" rev-parse HEAD)
           if [ "$ACTUAL" != "$CPA_COMMIT" ]; then
             echo "::error::CPA SDK tag $CPA_VERSION resolved to $ACTUAL, expected pinned SHA $CPA_COMMIT"
@@ -106,7 +106,7 @@ jobs:
           CPA_VERSION=$(cat .cpa-version)
           CPA_COMMIT=$(cat .cpa-commit)
           git clone --depth 1 --branch "$CPA_VERSION" \
-            https://github.com/router-for-me/CLIProxyAPI.git "$GITHUB_WORKSPACE/../CLIProxyAPI"
+            https://github.com/Arkptz/CLIProxyAPI.git "$GITHUB_WORKSPACE/../CLIProxyAPI"
           ACTUAL=$(git -C "$GITHUB_WORKSPACE/../CLIProxyAPI" rev-parse HEAD)
           if [ "$ACTUAL" != "$CPA_COMMIT" ]; then
             echo "::error::CPA SDK tag $CPA_VERSION resolved to $ACTUAL, expected pinned SHA $CPA_COMMIT"

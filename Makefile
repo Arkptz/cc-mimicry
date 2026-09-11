@@ -1,6 +1,6 @@
 .PHONY: build test lint tidy vuln clean
 
-CPA_VERSION ?= $(shell cat .cpa-version 2>/dev/null || echo v7.2.51)
+CPA_VERSION ?= $(shell cat .cpa-version 2>/dev/null || echo v7.2.157-plugin3)
 VERSION     ?= 0.1.0
 OUT_DIR     ?= dist
 

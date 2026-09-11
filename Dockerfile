@@ -6,8 +6,8 @@
 #   COPY --from=ghcr.io/arkptz/cc-mimicry:v0.2.0 /plugin/cc-mimicry.so /plugins/linux/amd64/cc-mimicry.so
 
 ARG GO_VERSION=1.26
-ARG CPA_VERSION=v7.2.51
-ARG CPA_COMMIT=8b9c4da2452b42aaa917a80daadf72aadc843a13
+ARG CPA_VERSION=v7.2.157-plugin3
+ARG CPA_COMMIT=0bed1c8b2f2b28c9ad2b1e70172bbd3dc042d5bd
 
 FROM golang:${GO_VERSION}-bookworm AS build
 WORKDIR /src

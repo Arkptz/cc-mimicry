@@ -7,7 +7,7 @@
 # replace target). Clone it first (or override via a local go.work):
 #   CPA_VERSION=$(cat .cpa-version); CPA_COMMIT=$(cat .cpa-commit)
 #   git clone --depth 1 --branch "$CPA_VERSION" \
-#     https://github.com/router-for-me/CLIProxyAPI.git ../CLIProxyAPI
+#     https://github.com/Arkptz/CLIProxyAPI.git ../CLIProxyAPI
 #   [ "$(git -C ../CLIProxyAPI rev-parse HEAD)" = "$CPA_COMMIT" ] || echo "WARNING: SHA mismatch"
 #
 # Usage:
