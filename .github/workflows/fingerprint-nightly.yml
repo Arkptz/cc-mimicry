@@ -108,6 +108,30 @@ jobs:
           # 4. Extract.
           tar -xzf pkg.tgz -C pkg --strip-components=1
 
+          # 5. Since 2.1.x the wrapper package ships no binary: the native
+          #    executable lives in a per-platform optionalDependency. Fetch the
+          #    linux-x64 one (same version, same integrity check) and unpack it
+          #    alongside, so the fingerprint step finds a real ELF.
+          NATIVE_PKG="${CLAUDE_PKG}-linux-x64"
+          mkdir -p pkg/vendor-linux-x64
+          curl -fsSL "${NPM_REGISTRY}/${NATIVE_PKG}/${VERSION}" -o native-meta.json
+          NATIVE_URL=$(jq -r .dist.tarball native-meta.json)
+          NATIVE_INTEGRITY=$(jq -r .dist.integrity native-meta.json)
+          curl -fsSL "$NATIVE_URL" -o native.tgz
+          NATIVE_ALG=${NATIVE_INTEGRITY%%-*}
+          NATIVE_EXPECTED_B64=${NATIVE_INTEGRITY#*-}
+          if [ "$NATIVE_ALG" != "sha512" ]; then
+            echo "::error::unexpected integrity algorithm for $NATIVE_PKG: $NATIVE_ALG"
+            exit 1
+          fi
+          NATIVE_ACTUAL_B64=$(openssl dgst -sha512 -binary native.tgz | base64 -w0)
+          if [ "$NATIVE_ACTUAL_B64" != "$NATIVE_EXPECTED_B64" ]; then
+            echo "::error::sha512 mismatch for $NATIVE_PKG: registry=$NATIVE_EXPECTED_B64 actual=$NATIVE_ACTUAL_B64"
+            exit 1
+          fi
+          tar -xzf native.tgz -C pkg/vendor-linux-x64 --strip-components=1
+          echo "native package $NATIVE_PKG sha512 OK"
+
           TARBALL_ABS="$(pwd)/pkg.tgz"
           PKG_DIR="$(pwd)/pkg"
           echo "tarball-path=$TARBALL_ABS" >> "$GITHUB_OUTPUT"
@@ -144,11 +168,16 @@ jobs:
           done < <(find "$PKG_DIR" -type f -print0)
 
           if [ -z "$ELF" ]; then
-            echo "::warning::no ELF found in tarball; falling back to cli.js strings"
+            echo "::warning::no ELF found in tarball; falling back to JS glue strings"
             # Fallback: grep JS glue. This still surfaces UA/beta drift for
-            # pure-JS releases.
-            ELF=$(find "$PKG_DIR" -type f -name '*.js' -printf '%s\t%p\n' \
-              | sort -nr | head -1 | cut -f2)
+            # pure-JS releases. Recent releases ship .cjs, older ones .js.
+            ELF=$(find "$PKG_DIR" -type f \( -name '*.js' -o -name '*.cjs' -o -name '*.mjs' \) \
+              -printf '%s\t%p\n' | sort -nr | head -1 | cut -f2)
+          fi
+          if [ -z "$ELF" ]; then
+            echo "::error::no ELF and no JS glue found under $PKG_DIR — package layout changed"
+            find "$PKG_DIR" -type f -printf '%s\t%p\n' | sort -nr | head -20
+            exit 1
           fi
           echo "inspecting: $ELF"
           file "$ELF"
@@ -157,7 +186,7 @@ jobs:
           STRINGS_OUT=_fp/strings.txt
           : > "$STRINGS_OUT"
           strings -a "$ELF" >> "$STRINGS_OUT" || true
-          find "$PKG_DIR" -type f -name '*.js' -print0 \
+          find "$PKG_DIR" -type f \( -name '*.js' -o -name '*.cjs' -o -name '*.mjs' \) -print0 \
             | xargs -0 -r strings -a >> "$STRINGS_OUT" || true
 
           # Extract UA pattern: `claude-cli/<ver> (<env>, <surface>)`
