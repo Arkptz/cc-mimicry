@@ -23,3 +23,6 @@ go.work.sum
 # dg local cache
 .dg/.cache.json
 config.yaml
+
+# Recon working dir (downloaded CLI binaries, raw flows — never committed)
+/_work/
