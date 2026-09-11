@@ -1,6 +1,6 @@
 module github.com/arkptz/cc-mimicry
 
-go 1.26.4
+go 1.26.7
 
 require (
 	github.com/router-for-me/CLIProxyAPI/v7 v7.2.157

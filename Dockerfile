@@ -38,6 +38,9 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
 COPY . .
+# COPY above restores the repo's go.mod, whose replace path (../forks/CLIProxyAPI)
+# does not exist in this image — point it back at the verified clone.
+RUN go mod edit -replace github.com/router-for-me/CLIProxyAPI/v7=/CLIProxyAPI
 
 ARG VERSION=0.1.0
 RUN --mount=type=cache,target=/go/pkg/mod \
