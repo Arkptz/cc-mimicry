@@ -17,6 +17,9 @@
 
 set -euo pipefail
 
+# The TUI needs a terminal type; CI runners have none set.
+export TERM="${TERM:-xterm-256color}"
+
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 VERSION=""
 SURFACES="both"
@@ -79,13 +82,23 @@ UPSTREAM_PREFIX=$(printf '%s' "$UPSTREAM" | sed -E 's#^https?://[^/]+##; s#/$##'
 
 WORK_DIR="$REPO_ROOT/_work/capture-$VERSION"
 # Fixtures are grouped per CLI version, with identical file names inside each.
-CAPTURE_DIR="$REPO_ROOT/testdata/captures/v$VERSION"
+# The nightly workflow overrides this (CC_CAPTURE_DIR) so fresh captures land
+# in a staging dir first and get diffed against the committed ones instead of
+# silently overwriting them.
+CAPTURE_DIR="${CC_CAPTURE_DIR:-$REPO_ROOT/testdata/captures/v$VERSION}"
 mkdir -p "$WORK_DIR" "$CAPTURE_DIR"
 
-# Both tools come from this repo's flake, so a capture run resolves the same
-# mitmproxy the lock pins rather than the caller's nixpkgs registry.
-MITMDUMP="$(nix build "$REPO_ROOT#recon-proxy" --no-link --print-out-paths)/bin/mitmdump"
-RECON_PYTHON="$(nix build "$REPO_ROOT#recon-python" --no-link --print-out-paths)/bin/python3"
+# Both tools come from this repo's flake by default, so a capture run resolves
+# the same mitmproxy the lock pins rather than the caller's nixpkgs registry.
+# CI (no nix) overrides them with the pip-installed pair via CC_MITMDUMP /
+# CC_RECON_PYTHON; the python must be able to `import mitmproxy`.
+if [ -n "${CC_MITMDUMP:-}" ] && [ -n "${CC_RECON_PYTHON:-}" ]; then
+  MITMDUMP="$CC_MITMDUMP"
+  RECON_PYTHON="$CC_RECON_PYTHON"
+else
+  MITMDUMP="$(nix build "$REPO_ROOT#recon-proxy" --no-link --print-out-paths)/bin/mitmdump"
+  RECON_PYTHON="$(nix build "$REPO_ROOT#recon-python" --no-link --print-out-paths)/bin/python3"
+fi
 
 case "$SURFACES" in
   both) SURFACE_LIST="cli sdk-cli" ;;
@@ -139,10 +152,15 @@ capture_one() {
   # the TUI needs a pty, so the cli surface is captured through `script`.
   set +e
   if [ "$surface" = "cli" ]; then
+    # The TUI never exits on its own against a 401 upstream (it retries and
+    # waits for input), so the whole pty driver is bounded by timeout(1).
+    # SIGINT twice, then TERM — the exact keystrokes the manual capture used,
+    # so the captured request is identical; timeout just enforces the budget.
     env -u ANTHROPIC_API_KEY \
       ANTHROPIC_BASE_URL="http://127.0.0.1:$PORT$UPSTREAM_PREFIX" \
       ANTHROPIC_AUTH_TOKEN="$ANTHROPIC_AUTH_TOKEN" \
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+      timeout --signal=INT --kill-after=5 "${CC_CLI_BUDGET:-40}" \
       script -qefc "$(printf '%q' "$CLAUDE_BIN") --model $(printf '%q' "$MODEL")" /dev/null \
       < <(
           # A fresh workspace first shows the "do you trust this folder?"
@@ -156,6 +174,7 @@ capture_one() {
       ANTHROPIC_BASE_URL="http://127.0.0.1:$PORT$UPSTREAM_PREFIX" \
       ANTHROPIC_AUTH_TOKEN="$ANTHROPIC_AUTH_TOKEN" \
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+      timeout --signal=TERM --kill-after=5 "${CC_CLI_BUDGET:-60}" \
       "$CLAUDE_BIN" -p "$PROMPT" --model "$MODEL" > "$cli_log" 2>&1
   fi
   local cli_rc=$?

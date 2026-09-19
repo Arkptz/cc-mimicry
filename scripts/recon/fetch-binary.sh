@@ -5,14 +5,32 @@
 # native binary ships in a per-platform package. This fetches the linux-x64 one,
 # verifies its npm sha512, and unpacks it to _work/claude-<version>/claude.
 #
-# Usage: scripts/recon/fetch-binary.sh 2.1.268
+# Usage: scripts/recon/fetch-binary.sh 2.1.268 [--tgz <path>]
+#   --tgz  install from an already-downloaded tarball instead of the registry.
+#          The bytes are still verified against the registry sha512, so a CI
+#          artifact cannot smuggle a different binary past the gate.
 
 set -euo pipefail
 
 VERSION="${1:-}"
-if [ -z "$VERSION" ]; then
-  echo "usage: $0 <version>   (e.g. $0 2.1.268)" >&2
+if [ -z "$VERSION" ] || [ "$VERSION" = "--tgz" ]; then
+  echo "usage: $0 <version> [--tgz <path>]   (e.g. $0 2.1.268)" >&2
   echo "hint: npm view @anthropic-ai/claude-code dist-tags" >&2
+  exit 2
+fi
+shift
+
+TGZ=""
+if [ "${1:-}" = "--tgz" ]; then
+  if [ $# -lt 2 ] || [ -z "$2" ]; then
+    echo "error: --tgz needs a path" >&2
+    exit 2
+  fi
+  TGZ="$2"
+  shift 2
+fi
+if [ $# -gt 0 ]; then
+  echo "error: unknown argument: $1" >&2
   exit 2
 fi
 
@@ -35,7 +53,12 @@ curl -fsSL "$REGISTRY/$PKG/$VERSION" -o "$TMP/meta.json"
 TARBALL=$(jq -r .dist.tarball "$TMP/meta.json")
 INTEGRITY=$(jq -r .dist.integrity "$TMP/meta.json")
 
-curl -fsSL "$TARBALL" -o "$TMP/pkg.tgz"
+if [ -n "$TGZ" ]; then
+  # Verify the artifact bytes are exactly the registry's tarball before use.
+  cp "$TGZ" "$TMP/pkg.tgz"
+else
+  curl -fsSL "$TARBALL" -o "$TMP/pkg.tgz"
+fi
 
 ALG=${INTEGRITY%%-*}
 EXPECTED=${INTEGRITY#*-}

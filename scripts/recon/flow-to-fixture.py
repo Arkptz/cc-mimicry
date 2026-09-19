@@ -108,10 +108,14 @@ def build_fixture(flow: http.HTTPFlow, surface: str, version: str) -> dict[str, 
 
     # The shape of tools[] is part of the fingerprint (2.1.268 sends no
     # cache_control on any tool); the names are the caller's, so keep only the
-    # shape.
+    # shape. The raw count varies with the machine's MCP servers (190+ tools
+    # on a loaded workstation, ~31 on a clean runner), so the core count —
+    # built-in tools only — is what the drift compare pins.
     tools = body.get("tools") or []
+    core = [t for t in tools if isinstance(t, dict) and not str(t.get("name", "")).startswith("mcp__")]
     tools_shape = {
         "count": len(tools),
+        "core_count": len(core),
         "with_cache_control": sum(
             1 for t in tools if isinstance(t, dict) and "cache_control" in t
         ),
