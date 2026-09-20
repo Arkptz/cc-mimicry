@@ -31,3 +31,6 @@ config.yaml
 *.flow
 mitm_mcp_traffic.db
 *.mitm.db
+
+# Python bytecode from local script runs
+__pycache__/

@@ -37,8 +37,8 @@ func TestBuildEgressHeaderResponse_CLISurface(t *testing.T) {
 	if !strings.Contains(ua, "(external, cli)") {
 		t.Fatalf("cli User-Agent = %q, want '(external, cli)' marker", ua)
 	}
-	if !strings.HasPrefix(ua, "claude-cli/2.1.268 ") {
-		t.Fatalf("cli User-Agent = %q, want claude-cli/2.1.268 prefix", ua)
+	if !strings.HasPrefix(ua, "claude-cli/"+cliTargetVersion+" ") {
+		t.Fatalf("cli User-Agent = %q, want claude-cli/%s prefix", ua, cliTargetVersion)
 	}
 	betas := strings.Split(resp.Headers.Get("Anthropic-Beta"), ",")
 	if len(betas) != 11 {

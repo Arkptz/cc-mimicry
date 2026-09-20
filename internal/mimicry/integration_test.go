@@ -239,7 +239,7 @@ func assertHeaderPipeline(t *testing.T, tc integrationCase, capt capture) {
 	resp := buildEgressHeaderResponse(tc.profile)
 	h := resp.Headers
 
-	wantUA := "claude-cli/2.1.268 (external, " + tc.profile.Entrypoint + ")"
+	wantUA := "claude-cli/" + cliTargetVersion + " (external, " + tc.profile.Entrypoint + ")"
 	if got := h.Get("User-Agent"); got != wantUA {
 		t.Errorf("User-Agent = %q, want %q", got, wantUA)
 	}

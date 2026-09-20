@@ -163,7 +163,7 @@ func TestSystemRewriteThreeBlocks(t *testing.T) {
 				t.Fatalf("expected 3 system blocks, got: %s", sys.Raw)
 			}
 			billing := sys.Array()[0].Get("text").String()
-			if !strings.HasPrefix(billing, "x-anthropic-billing-header: cc_version=2.1.268.") {
+			if !strings.HasPrefix(billing, "x-anthropic-billing-header: cc_version="+cliTargetVersion+".") {
 				t.Fatalf("[0] wrong billing prefix: %q", billing)
 			}
 			if !strings.Contains(billing, "cc_entrypoint="+tc.profile.Entrypoint+";") ||

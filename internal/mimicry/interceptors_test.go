@@ -150,7 +150,7 @@ func TestInterceptRequestBeforeEmitsSurfaceBillingBlock(t *testing.T) {
 				t.Fatalf("expected 3 system blocks, got: %s", sys.Raw)
 			}
 			billing := sys.Array()[0].Get("text").String()
-			wantPrefix := "x-anthropic-billing-header: cc_version=2.1.268."
+			wantPrefix := "x-anthropic-billing-header: cc_version=" + cliTargetVersion + "."
 			if !strings.HasPrefix(billing, wantPrefix) {
 				t.Fatalf("billing block missing prefix: %q", billing)
 			}

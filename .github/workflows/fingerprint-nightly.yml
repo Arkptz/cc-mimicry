@@ -208,6 +208,13 @@ jobs:
           mkdir -p baseline
           cp _work/nightly/fingerprint-binary.json baseline/fingerprint-binary.json
 
+      # Mechanical retarget from the staged captures: version constants,
+      # x-stainless-package-version, and the embedded intro. Betas / agent
+      # identifiers stay manual (membership judgment) — stage-drift.py reports
+      # them. Runs on PR runs too: the PR validates the retargeted plugin
+      # against the same captures via the test suite below.
+      # The hint is recorded BEFORE the retarget so it reflects the state the
+      # run started from, not the state the retarget produced.
       - name: Record retarget hint
         run: |
           set -euo pipefail
@@ -216,8 +223,17 @@ jobs:
           if [ "$CURRENT" = "$LATEST" ]; then
             echo "RETARGET=not needed (plugin targets $CURRENT)" >> "$GITHUB_ENV"
           else
-            echo "RETARGET=needed (plugin targets $CURRENT, upstream released $LATEST)" >> "$GITHUB_ENV"
+            echo "RETARGET=needed (plugin targeted $CURRENT, upstream released $LATEST)" >> "$GITHUB_ENV"
           fi
+
+      - name: Retarget plugin from new captures
+        id: retarget
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          scripts/nightly/retarget.py \
+            --version "$(cat _work/nightly/version)" \
+            --repo-root "$PWD"
 
       - name: Run the Go test suite on the staged tree
         id: tests
@@ -264,7 +280,7 @@ jobs:
             **CHECK 1 (binary strings)**: ${{ steps.binary.outputs.drifted == 'true' && 'drifted — baseline/fingerprint-binary.json updated' || 'no drift' }}
             **CHECK 2 (wire capture)**: ${{ steps.stage.outputs.drifted == 'true' && 'drifted' || 'no drift' }}${{ steps.stage.outputs.incomplete == 'true' && ' (INCOMPLETE — at least one surface was not captured; see the workflow log)' || '' }}
             **Tests**: ${{ env.TESTS }}
-            **Retarget**: ${{ env.RETARGET }}
+            **Retarget**: ${{ env.RETARGET }} — ${{ steps.retarget.outcome == 'success' && 'applied mechanically (version constants + x-stainless-package-version + embedded intro); betas and agent identifiers need manual review' || 'NOT applied (script failed or found nothing to retarget) — see the workflow log' }}
 
             Same-version wire drift is reported here but existing fixtures are
             NOT overwritten — they carry real-credential provenance (PROC-001).
@@ -303,7 +319,8 @@ jobs:
         if: >-
           steps.capture.outcome == 'failure'
           || steps.stage.outputs.incomplete == 'true'
+          || steps.retarget.outcome == 'failure'
           || env.TESTS == 'failed'
         run: |
-          echo "::error::nightly incomplete: capture=${{ steps.capture.outcome }} incomplete=${{ steps.stage.outputs.incomplete }} tests=${{ env.TESTS }}"
+          echo "::error::nightly incomplete: capture=${{ steps.capture.outcome }} incomplete=${{ steps.stage.outputs.incomplete }} retarget=${{ steps.retarget.outcome }} tests=${{ env.TESTS }}"
           exit 1

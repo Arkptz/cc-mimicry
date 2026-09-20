@@ -16,8 +16,10 @@ import (
 // 2.1.206, U3) and the cch=<hex>; signed by CPA downstream. The plugin emits
 // deterministic placeholders; the capture carries either the real values or the
 // "<DYNAMIC>" redaction. We normalise both sides before comparison.
+// version is interpolated from cliTargetVersion so a retarget does not touch
+// this test.
 var billingDynamicsRE = regexp.MustCompile(
-	`(cc_version=2\.1\.268\.)([A-Za-z0-9<>]+)`,
+	`(cc_version=` + regexp.QuoteMeta(cliTargetVersion) + `\.)([A-Za-z0-9<>]+)`,
 )
 
 // captureDir is the fixture directory for the version the plugin impersonates.

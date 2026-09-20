@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Retarget the plugin's impersonated CLI version from fresh captures.
+
+Reads the captures staged by stage-drift.py (testdata/captures/v<version>/)
+and mechanically updates every version-pinned surface in the plugin source:
+
+  - internal/mimicry/mimicry.go   cliTargetVersion constant
+  - internal/mimicry/surface.go   cliVersion constant
+  - internal/mimicry/egress_headers.go
+                                  stainlessPackageVersion (from the capture's
+                                  x-stainless-package-version header)
+  - internal/mimicry/surfacedata/shared_intro.txt
+                                  system[2] static prefix (everything before
+                                  the "# Session-specific guidance" marker)
+
+What is deliberately NOT auto-updated, with the reason:
+  - beta sets (surface.go cliBetas/sdkCLIBetas): the wire set is a subset of
+    the binary's strings, and membership (auth-gated vs not) is a manual
+    judgment — the nightly compare reports wire drift instead;
+  - surface agent identifiers: "You are Claude Code ..." changes are rare and
+    semantic; the compare reports them;
+  - buildhash: per-build value; the plugin derives a deterministic one.
+
+Fails (exit 1, no partial writes) when the captures disagree with each other
+or a pinned source location cannot be found — a retarget that cannot be done
+mechanically must be done by hand, not half-way.
+
+Exit code 0 also prints a one-line summary per touched file.
+
+Usage: retarget.py --version <ver> --repo-root <dir>
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+
+SESSION_GUIDANCE_MARKER = "# Session-specific guidance"
+
+
+def die(msg: str) -> None:
+    print(f"retarget: error: {msg}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def load_capture(repo: Path, version: str, surface: str) -> dict:
+    path = repo / "testdata" / "captures" / f"v{version}" / f"{surface}-body.json"
+    if not path.is_file():
+        die(f"missing capture {path}")
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def static_intro(blocks: list) -> str:
+    for block in blocks:
+        if block.get("idx") == 2:
+            text = block.get("text") or ""
+            before, _, found = text.partition(SESSION_GUIDANCE_MARKER)
+            if not found:
+                die("capture system[2] has no '# Session-specific guidance' marker")
+            return before
+    die("capture has no system[2] block")
+    raise AssertionError  # unreachable
+
+
+def replace_const(source: str, name: str, new_value: str, path: Path) -> str:
+    # Matches a Go const / var declaration, with or without the keyword
+    # (`const x = "v"` or plain `x = "v"` inside a const block), indented or
+    # not, with an optional trailing comment.
+    pattern = re.compile(
+        rf'(^[\t ]*(?:const\s+)?{name}\s*=\s*)"[^"]*"(\s*(?://.*)?$)', re.M
+    )
+    if not pattern.search(source):
+        die(f"{path}: cannot find `{name} = \"...\"` to retarget")
+    return pattern.sub(rf'\g<1>"{new_value}"\g<2>', source, count=1)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--version", required=True)
+    parser.add_argument("--repo-root", required=True)
+    args = parser.parse_args()
+    repo = Path(args.repo_root)
+    version = args.version
+
+    cli = load_capture(repo, version, "cli")
+    sdk = load_capture(repo, version, "sdk-cli")
+
+    # Cross-surface coherence gate: the intro and stainless values must agree.
+    intro_cli = static_intro(cli["system_blocks"])
+    intro_sdk = static_intro(sdk["system_blocks"])
+    if intro_cli != intro_sdk:
+        die("cli and sdk-cli captures disagree on the system[2] static intro")
+    pkg_cli = (cli.get("headers") or {}).get("x-stainless-package-version")
+    pkg_sdk = (sdk.get("headers") or {}).get("x-stainless-package-version")
+    if pkg_cli != pkg_sdk or not pkg_cli:
+        die(f"captures disagree on x-stainless-package-version: {pkg_cli!r} vs {pkg_sdk!r}")
+
+    touched: list[str] = []
+
+    mimicry = repo / "internal" / "mimicry" / "mimicry.go"
+    src = mimicry.read_text(encoding="utf-8")
+    src = replace_const(src, "cliTargetVersion", version, mimicry)
+    mimicry.write_text(src, encoding="utf-8")
+    touched.append(str(mimicry.relative_to(repo)))
+
+    surface = repo / "internal" / "mimicry" / "surface.go"
+    src = surface.read_text(encoding="utf-8")
+    src = replace_const(src, "cliVersion", version, surface)
+    surface.write_text(src, encoding="utf-8")
+    touched.append(str(surface.relative_to(repo)))
+
+    egress = repo / "internal" / "mimicry" / "egress_headers.go"
+    src = egress.read_text(encoding="utf-8")
+    src = replace_const(src, "stainlessPackageVersion", pkg_cli, egress)
+    egress.write_text(src, encoding="utf-8")
+    touched.append(str(egress.relative_to(repo)))
+
+    intro_path = repo / "internal" / "mimicry" / "surfacedata" / "shared_intro.txt"
+    intro_path.write_text(intro_cli, encoding="utf-8")
+    touched.append(str(intro_path.relative_to(repo)))
+
+    for name in touched:
+        print(f"retarget: updated {name}")
+    print(f"retarget: plugin now impersonates CLI {version} "
+          f"(x-stainless-package-version {pkg_cli})")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
