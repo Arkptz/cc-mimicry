@@ -31,5 +31,12 @@ the default `GITHUB_TOKEN` do not trigger `pull_request` workflows (GitHub
 limitation), which is why the test run happens inside the nightly workflow
 itself.
 
+The same workflow also runs as a pull-request check (paths-filtered to the
+nightly machinery: the workflow file, `scripts/nightly/`, `scripts/recon/`,
+`baseline/`, `testdata/captures/`) and on push to `main` along those paths —
+so changes to the capture pipeline are validated in the PR that introduces
+them, without waiting for the 02:17 cron. In PR mode it never opens a drift
+PR or stages anything; it is a pure validation gate.
+
 **Do NOT commit raw mitmproxy flow files.** They contain the full system
 prompt and the auth header. Only normalized fixture JSON is committed.

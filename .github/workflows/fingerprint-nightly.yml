@@ -24,20 +24,46 @@ name: Nightly fingerprint drift check
 # The drift PR is opened with the default GITHUB_TOKEN, which does NOT trigger
 # `pull_request` workflows (GitHub limitation) — that is why the tests run in
 # THIS workflow instead of waiting for ci.yml.
+#
+# PR mode: a pull request touching the nightly machinery (this file,
+# scripts/nightly/, scripts/recon/, baseline/, testdata/captures/) runs the
+# SAME pipeline as a validation gate — capture against the fake upstream,
+# drift compare, tests — but never opens a drift PR. The same paths filter on
+# push to main runs the pipeline right after merge instead of waiting for the
+# 02:17 cron, where a drift PR IS opened (e.g. to auto-populate a placeholder
+# baseline).
 
 on:
   schedule:
     # 02:17 UTC — offset from :00 to avoid the cron thundering herd.
     - cron: '17 2 * * *'
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fingerprint-nightly.yml'
+      - 'scripts/nightly/**'
+      - 'scripts/recon/**'
+      - 'baseline/**'
+      - 'testdata/captures/**'
+  pull_request:
+    paths:
+      - '.github/workflows/fingerprint-nightly.yml'
+      - 'scripts/nightly/**'
+      - 'scripts/recon/**'
+      - 'baseline/**'
+      - 'testdata/captures/**'
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
+  pull-requests: read
 
+# github.ref is unique per PR (refs/pull/N/merge) and shared by schedule and
+# push to main (both refs/heads/main), so PRs cancel their own stale runs
+# while scheduled runs never cancel each other mid-capture.
 concurrency:
-  group: fingerprint-nightly-${{ github.workflow }}
-  cancel-in-progress: false
+  group: fingerprint-nightly-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   NPM_REGISTRY: 'https://registry.npmjs.org'
@@ -51,6 +77,12 @@ jobs:
     name: Fingerprint drift (binary + wire + tests)
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # Write scopes only exist off the PR path: on schedule/push the job opens
+    # the drift PR and stages captures; on a pull_request it is a pure
+    # validation gate (GitHub clamps fork PRs to read-only regardless).
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -168,7 +200,9 @@ jobs:
           fi
 
       - name: Stage binary baseline for the drift PR
-        if: steps.binary.outputs.drifted == 'true'
+        if: >-
+          github.event_name != 'pull_request'
+          && steps.binary.outputs.drifted == 'true'
         run: |
           set -euo pipefail
           mkdir -p baseline
@@ -204,9 +238,14 @@ jobs:
             echo "TESTS=failed" >> "$GITHUB_ENV"
           fi
 
+      # Only the scheduled/push run opens a drift PR: a pull_request run is a
+      # validation gate and must not push branches or mutate the PR itself
+      # (the GITHUB_TOKEN cannot, and must not, re-trigger workflows).
       - name: Open drift PR
         id: pr
-        if: steps.binary.outputs.drifted == 'true' || steps.stage.outputs.drifted == 'true'
+        if: >-
+          github.event_name != 'pull_request'
+          && (steps.binary.outputs.drifted == 'true' || steps.stage.outputs.drifted == 'true')
         uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7.0.11
         with:
           branch: fingerprint-drift/nightly
