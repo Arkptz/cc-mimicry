@@ -183,6 +183,11 @@ jobs:
   # only appears once the semver-tagged image is actually in GHCR. Re-validates
   # the SDK pin against the tagged commit so a release can never point at a .so
   # built against a moved/mismatched CLIProxyAPI SDK.
+  #
+  # Idempotent: when the tag was created by release-please, the Release already
+  # exists (created by it with the changelog notes) and this job only appends
+  # the image reference to the notes. On a manually pushed tag it creates the
+  # Release as before.
   release:
     name: GitHub Release
     needs: build_push
@@ -207,15 +212,27 @@ jobs:
             echo "::error::CPA SDK tag $CPA_VERSION resolves to $ACTUAL, expected pinned $CPA_COMMIT"
             exit 1
           fi
-      - name: Create GitHub Release
+      - name: Publish GitHub Release (create or extend)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
           IMAGE_REPO=$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')
-          gh release create "$TAG" \
-            --repo "$REPO" \
-            --title "$TAG" \
-            --generate-notes \
-            --notes "Plugin image: \`ghcr.io/${IMAGE_REPO}:${TAG#v}\` (\`/plugin/cc-mimicry.so\`). CPA SDK: \`$(cat .cpa-version)\`."
+          IMAGE_NOTE="Plugin image: \`ghcr.io/${IMAGE_REPO}:${TAG#v}\` (\`/plugin/cc-mimicry.so\`). CPA SDK: \`$(cat .cpa-version)\`."
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            # release-please already created this Release with the changelog;
+            # append the image reference to its notes.
+            gh release edit "$TAG" \
+              --repo "$REPO" \
+              --notes "$(gh release view "$TAG" --repo "$REPO" --json body -q .body)
+
+          ${IMAGE_NOTE}"
+          else
+            gh release create "$TAG" \
+              --repo "$REPO" \
+              --title "$TAG" \
+              --generate-notes \
+              --notes "$IMAGE_NOTE"
+          fi

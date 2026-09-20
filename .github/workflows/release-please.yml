@@ -1,0 +1,66 @@
+name: Release please
+
+# Release-please driven releases (conventional commits -> Release PR -> tag +
+# GitHub Release on merge). Changelog lives in CHANGELOG.md, versions in
+# .release-please-manifest.json; the release PR accumulates changes until you
+# merge it — no release ships without a human pressing merge.
+#
+# Flow: push feat/fix to main -> this workflow opens/updates a Release PR
+# (chore/release vX.Y.Z) -> merge it -> release-please tags vX.Y.Z, creates
+# the GitHub Release with changelog notes, and this same workflow (running on
+# the merge push) detects release_created and dispatches the image build on
+# the tag ref. The dispatch is needed because release-please pushes with
+# GITHUB_TOKEN, and tags pushed by GITHUB_TOKEN do not trigger other
+# workflows (GitHub recursion guard).
+#
+# docker-build.yml keeps building on manual v* tags unchanged; its release
+# job is now idempotent (gh release edit instead of create) so both paths
+# coexist.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-please-${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
+        with:
+          release-type: go
+          # GITHUB_TOKEN is fine: PRs created by it get no CI (GitHub
+          # limitation, same as the nightly drift PRs) — acceptable for a
+          # release PR that only touches CHANGELOG.md + the manifest.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # The release-please merge push created the tag + GitHub Release; build the
+  # image on that tag and attach the image info to the release notes.
+  build-dispatch:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch docker-build on the release tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh workflow run docker-build.yml --ref "${{ needs.release-please.outputs.tag_name }}"
+          echo "docker-build dispatched at ${{ needs.release-please.outputs.tag_name }}"

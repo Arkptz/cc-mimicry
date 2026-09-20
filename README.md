@@ -86,6 +86,12 @@ COPY --from=ghcr.io/arkptz/cc-mimicry:v0.1.0 /plugin/cc-mimicry.so /plugins/linu
 > release. The image carries `cc-mimicry.cpa-sdk-version` / `cc-mimicry.cpa-sdk-commit`
 > OCI labels so you can verify what a given tag was built against.
 
+Releases are automatic (`.github/workflows/release-please.yml`): conventional
+commits (`feat:` → minor, `fix:` → patch) accumulate in a Release PR that
+release-please keeps up to date. Merge the Release PR and the `vX.Y.Z` tag,
+the GitHub Release with changelog notes, and the GHCR image follow — nothing
+to run by hand.
+
 ## Build
 
 ```sh
