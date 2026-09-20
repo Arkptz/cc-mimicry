@@ -7,6 +7,13 @@ on:
     branches: [main]
     tags: ['v*']
   pull_request:
+    # The Release PR only touches the changelog + release manifest; building
+    # (and burning 15+ min of GHA minutes) on it is pure waste. Code-carrying
+    # PRs build the image as a check without pushing.
+    paths-ignore:
+      - 'CHANGELOG.md'
+      - '.release-please-manifest.json'
+      - '**.md'
   workflow_dispatch:
 
 # Least-privilege: packages:write to push to GHCR; NO id-token:write (F12 fix).

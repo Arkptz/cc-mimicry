@@ -62,5 +62,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          gh workflow run docker-build.yml --ref "${{ needs.release-please.outputs.tag_name }}"
-          echo "docker-build dispatched at ${{ needs.release-please.outputs.tag_name }}"
+          # No checkout in this job — -R is mandatory, gh cannot resolve the
+          # repository from a git remote here.
+          gh workflow run docker-build.yml \
+            --repo "${{ github.repository }}" \
+            --ref "${{ needs.release-please.outputs.tag_name }}"
+          echo "docker-build dispatched at ${{ needs.release-please.outputs.tag_name }} (repo ${{ github.repository }})"
