@@ -267,12 +267,13 @@ jobs:
           branch: fingerprint-drift/nightly
           base: main
           title: 'ci: fingerprint drift detected (${{ steps.resolve.outputs.version }})'
+          # Conventional type matters: when the PR carries wire captures the
+          # retarget follows, i.e. plugin BEHAVIOR changes (new impersonated
+          # version and/or intro) — that is a `feat:` so release-please puts
+          # it in the changelog and bumps the version. A binary-baseline-only
+          # refresh changes no plugin behavior, so it stays a `chore:`.
           commit-message: |
-            ci: update fingerprint captures to ${{ steps.resolve.outputs.version }}
-
-            Detected by the nightly fingerprint-drift workflow. CHECK 1
-            (binary strings) and/or CHECK 2 (wire capture) produced a
-            fingerprint that differs from what the repository tracks.
+            ${{ steps.stage.outputs.drifted == 'true' && format('feat: retarget fingerprint to {0}', steps.resolve.outputs.version) || format('chore: refresh fingerprint baseline to {0}', steps.resolve.outputs.version) }}
           body: |
             Automated drift detection from `.github/workflows/fingerprint-nightly.yml`.
 
