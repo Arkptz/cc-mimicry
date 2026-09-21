@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/Arkptz/cc-mimicry/compare/v0.3.0...v0.3.1) (2026-09-21)
+
+
+### Bug Fixes
+
+* repair the release image dispatch and skip docker on changelog PRs ([0af464c](https://github.com/Arkptz/cc-mimicry/commit/0af464c10249e4c905b643cea7ab3babdf04a3b3))
+
 ## [0.3.0](https://github.com/Arkptz/cc-mimicry/compare/v0.2.1...v0.3.0) (2026-09-20)
 
 
