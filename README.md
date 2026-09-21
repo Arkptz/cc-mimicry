@@ -9,8 +9,8 @@ third-party clients.**
 Currently impersonating Claude Code CLI <!-- cc-target-version:start -->**2.1.278**<!-- cc-target-version:end -->,
 kept current by a nightly drift check against the real binary.
 
-[![CI](https://github.com/Arkptz/cc-mimicry/actions/workflows/ci.yml/badge.svg)](https://github.com/Arkptz/cc-mimicry/actions/workflows/ci.yml)
-[![Nightly fingerprint drift](https://github.com/Arkptz/cc-mimicry/actions/workflows/fingerprint-nightly.yml/badge.svg)](https://github.com/Arkptz/cc-mimicry/actions/workflows/fingerprint-nightly.yml)
+[![CI](https://github.com/Arkptz/cc-mimicry/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Arkptz/cc-mimicry/actions/workflows/ci.yml?query=branch%3Amain)
+[![Nightly fingerprint drift](https://github.com/Arkptz/cc-mimicry/actions/workflows/fingerprint-nightly.yml/badge.svg?branch=main)](https://github.com/Arkptz/cc-mimicry/actions/workflows/fingerprint-nightly.yml?query=branch%3Amain)
 [![Release](https://img.shields.io/github/v/release/Arkptz/cc-mimicry?sort=semver)](https://github.com/Arkptz/cc-mimicry/releases)
 [![GHCR](https://img.shields.io/badge/ghcr.io-cc--mimicry-2496ed)](https://github.com/Arkptz/cc-mimicry/pkgs/container/cc-mimicry)
 [![Go](https://img.shields.io/github/go-mod/go-version/Arkptz/cc-mimicry)](go.mod)
