@@ -2,8 +2,10 @@ name: Release please
 
 # Release-please driven releases (conventional commits -> Release PR -> tag +
 # GitHub Release on merge). Changelog lives in CHANGELOG.md, versions in
-# .release-please-manifest.json; the release PR accumulates changes until you
-# merge it — no release ships without a human pressing merge.
+# .release-please-manifest.json, and release-please-config.json's `extra-files`
+# rewrites the pinned image tags in README.md so the documented version never
+# lags the released one. The release PR accumulates changes until you merge it
+# — no release ships without a human pressing merge.
 #
 # Flow: push feat/fix to main -> this workflow opens/updates a Release PR
 # (chore/release vX.Y.Z) -> merge it -> release-please tags vX.Y.Z, creates
@@ -41,10 +43,16 @@ jobs:
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: release
         with:
-          release-type: go
+          # Manifest mode, NOT the `release-type` input: with `release-type`
+          # set the action builds its config in memory and never reads
+          # release-please-config.json, so `extra-files` (the README image
+          # tags) would be silently ignored.
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
           # GITHUB_TOKEN is fine: PRs created by it get no CI (GitHub
           # limitation, same as the nightly drift PRs) — acceptable for a
-          # release PR that only touches CHANGELOG.md + the manifest.
+          # release PR that only touches the changelog, the manifest and
+          # documentation version strings.
           token: ${{ secrets.GITHUB_TOKEN }}
 
   # The release-please merge push created the tag + GitHub Release; build the

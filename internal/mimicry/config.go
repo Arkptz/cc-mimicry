@@ -18,8 +18,8 @@ type pluginConfig struct {
 	// Default true.
 	InjectSystemPrompt bool `yaml:"inject_system_prompt"`
 	// CacheBreakpoints toggles the ephemeral cache_control breakpoint on the last
-	// tool. Default FALSE: the 2.1.268 captures carry no cache_control on any of
-	// their 221 tools, so emitting one is a positive fingerprint discriminator.
+	// tool. Default FALSE: the committed captures carry no cache_control on any
+	// tool, so emitting one is a positive fingerprint discriminator.
 	// Enable it only when trading fingerprint fidelity for prompt caching.
 	CacheBreakpoints bool `yaml:"cache_breakpoints"`
 	// FillFingerprint toggles request-body fingerprint fill (temperature,

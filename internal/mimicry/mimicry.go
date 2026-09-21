@@ -86,7 +86,7 @@ func applyRequestMimicry(body []byte, cfg pluginConfig, profile SurfaceProfile, 
 	return body, rw
 }
 
-// rewriteSystemForClaudeCode rebuilds system into the CLI 2.1.268 3-block form
+// rewriteSystemForClaudeCode rebuilds system into the CLI 3-block form
 // and relocates the original system prompt into a user/assistant message pair.
 //
 //	[0] billing attribution block

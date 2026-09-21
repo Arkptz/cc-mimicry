@@ -12,6 +12,8 @@ and mechanically updates every version-pinned surface in the plugin source:
   - internal/mimicry/surfacedata/shared_intro.txt
                                   system[2] static prefix (everything before
                                   the "# Session-specific guidance" marker)
+  - README.md                     the impersonated version between the
+                                  <!-- cc-target-version:start/end --> markers
 
 What is deliberately NOT auto-updated, with the reason:
   - beta sets (surface.go cliBetas/sdkCLIBetas): the wire set is a subset of
@@ -39,6 +41,14 @@ import sys
 from pathlib import Path
 
 SESSION_GUIDANCE_MARKER = "# Session-specific guidance"
+
+# The README states the impersonated CLI version exactly once, between these
+# markers, so the nightly retarget keeps the front page honest without a human
+# remembering to edit it.
+README_VERSION_RE = re.compile(
+    r"(<!-- cc-target-version:start -->).*?(<!-- cc-target-version:end -->)",
+    re.S,
+)
 
 
 def die(msg: str) -> None:
@@ -122,6 +132,16 @@ def main() -> int:
     intro_path = repo / "internal" / "mimicry" / "surfacedata" / "shared_intro.txt"
     intro_path.write_text(intro_cli, encoding="utf-8")
     touched.append(str(intro_path.relative_to(repo)))
+
+    readme = repo / "README.md"
+    src = readme.read_text(encoding="utf-8")
+    if not README_VERSION_RE.search(src):
+        die("README.md: cc-target-version markers are missing")
+    readme.write_text(
+        README_VERSION_RE.sub(rf"\g<1>**{version}**\g<2>", src, count=1),
+        encoding="utf-8",
+    )
+    touched.append(str(readme.relative_to(repo)))
 
     for name in touched:
         print(f"retarget: updated {name}")

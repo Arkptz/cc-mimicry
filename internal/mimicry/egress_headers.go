@@ -2,7 +2,7 @@ package mimicry
 
 // egress_headers.go implements the EgressHeaderInterceptor hook. It overrides
 // the final outbound HTTP header set the CPA claude executor is about to send
-// upstream so it matches the fingerprint of the real Claude Code CLI 2.1.268
+// upstream so it matches the fingerprint of the real Claude Code CLI
 // entrypoint selected by the plugin config (cli or sdk-cli).
 //
 // The hook runs post-auth, after CPA's applyClaudeHeaders and before request
@@ -17,7 +17,8 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
-// Static x-stainless-* fingerprint captured from CLI 2.1.268. These values are
+// Static x-stainless-* fingerprint captured from the targeted CLI version.
+// These values are
 // surface-invariant (identical between the interactive TUI and the -p / print
 // entrypoint) — only the User-Agent and Anthropic-Beta set diverge per surface.
 const (
@@ -48,7 +49,7 @@ func interceptEgressHeaders(raw []byte) ([]byte, error) {
 	return okEnvelope(buildEgressHeaderResponse(profile))
 }
 
-// headersToStrip lists CPA-injected headers that the real CLI 2.1.268 does NOT
+// headersToStrip lists CPA-injected headers that the real CLI does NOT
 // send (verified absent across all 5 capture fixtures including key-preserving
 // fable5 captures). The host's mergeHeaders applies ClearHeaders before the
 // executor wholesale-replaces, so these headers are removed from the wire set.

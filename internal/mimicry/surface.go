@@ -1,5 +1,5 @@
-// surface.go defines the two Claude Code CLI 2.1.268 surface
-// profiles the plugin can impersonate. Each SurfaceProfile captures the
+// surface.go defines the two Claude Code CLI surface profiles the plugin
+// can impersonate, at the version pinned by cliVersion. Each SurfaceProfile captures the
 // per-entrypoint fingerprint tuple (agent identity and anthropic-beta set)
 // extracted from real mitmproxy captures.
 //
@@ -21,12 +21,12 @@ import (
 const cliVersion = "2.1.278"
 
 // UserAgent returns the outbound User-Agent string for this surface, matching
-// the real CLI 2.1.268 format: "claude-cli/<version> (external, <entrypoint>)".
+// the real CLI format: "claude-cli/<version> (external, <entrypoint>)".
 func (p SurfaceProfile) UserAgent() string {
 	return fmt.Sprintf("claude-cli/%s (external, %s)", cliVersion, p.Entrypoint)
 }
 
-// SurfaceProfile describes one Claude Code CLI 2.1.268 entrypoint's static
+// SurfaceProfile describes one Claude Code CLI entrypoint's static
 // fingerprint that the plugin owns on the body path.
 //
 // Header-side fingerprint (user-agent, x-stainless-*, anthropic-beta) is owned
@@ -44,7 +44,8 @@ type SurfaceProfile struct {
 
 // sharedSystemIntro is the surface-invariant system[2] block (intro, security,
 // System, DoingTasks, Tone and — since 2.1.268 — the Text output section)
-// captured from CLI 2.1.268. It is byte-identical between cli and sdk-cli, and
+// captured from the CLI version in cliVersion. It is byte-identical between
+// cli and sdk-cli, and
 // stops before the client-dynamic "# Session-specific guidance" tail.
 //
 //go:embed surfacedata/shared_intro.txt
