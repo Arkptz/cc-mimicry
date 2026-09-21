@@ -1,17 +1,79 @@
+<div align="center">
+
 # cc-mimicry
 
-A CLIProxyAPI (CPA) plugin that makes Claude (Anthropic) OAuth requests look like
-they came from the native **Claude Code CLI**, so shared/pooled subscriptions are
-less likely to be flagged as third-party clients.
+**A CLIProxyAPI plugin that makes Anthropic OAuth traffic indistinguishable from
+the native Claude Code CLI — so pooled subscriptions are not flagged as
+third-party clients.**
+
+Currently impersonating Claude Code CLI **2.1.278**, kept current by a nightly
+drift check against the real binary.
 
 [![CI](https://github.com/Arkptz/cc-mimicry/actions/workflows/ci.yml/badge.svg)](https://github.com/Arkptz/cc-mimicry/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
+[![Nightly fingerprint drift](https://github.com/Arkptz/cc-mimicry/actions/workflows/fingerprint-nightly.yml/badge.svg)](https://github.com/Arkptz/cc-mimicry/actions/workflows/fingerprint-nightly.yml)
+[![Release](https://img.shields.io/github/v/release/Arkptz/cc-mimicry?sort=semver)](https://github.com/Arkptz/cc-mimicry/releases)
+[![GHCR](https://img.shields.io/badge/ghcr.io-cc--mimicry-2496ed)](https://github.com/Arkptz/cc-mimicry/pkgs/container/cc-mimicry)
+[![Go](https://img.shields.io/github/go-mod/go-version/Arkptz/cc-mimicry)](go.mod)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-It ports the request transforms from sub2api's `gateway_tool_rewrite.go` /
-`cc_mimicry` (originally the [Parrot](https://github.com/danger-dream/Parrot) /
-[cc-proxy](https://github.com/danger-dream/cc-proxy) lineage) into a native CPA
-plugin, so you keep CPA's high-throughput multi-account gateway and only add the
-mimicry on the request path.
+</div>
+
+## Why
+
+[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) (CPA) is a
+high-throughput multi-account gateway, but its outbound Anthropic requests do
+not look like the Claude Code CLI: different system prompt, different tool
+names, different headers. Every one of those is a discriminator.
+
+cc-mimicry ports the request transforms from sub2api's `gateway_tool_rewrite.go`
+/ `cc_mimicry` (originally the [Parrot](https://github.com/danger-dream/Parrot)
+/ [cc-proxy](https://github.com/danger-dream/cc-proxy) lineage) into a native
+CPA plugin. You keep CPA's gateway and add only the mimicry on the request path
+— no fork, no sidecar, no request rewriting in front of the proxy.
+
+Fidelity is not hand-maintained. The nightly workflow downloads the current
+Claude Code release, captures both entrypoints through mitmproxy against a local
+upstream, diffs the wire shape against the committed captures, retargets the
+plugin constants and the embedded system prompt, and opens a PR — so a CLI
+release does not silently break the disguise.
+
+## Quick start
+
+Pull the compiled plugin straight into any CPA image — no builder service, no
+volume mounts:
+
+```dockerfile
+COPY --from=ghcr.io/arkptz/cc-mimicry:0.3.0 /plugin/cc-mimicry.so /plugins/linux/amd64/cc-mimicry.so
+```
+
+Then enable it in CPA's `config.yaml`:
+
+```yaml
+plugins:
+  enabled: true
+  dir: "plugins"
+  configs:
+    cc-mimicry:
+      enabled: true
+      priority: 100
+      surface: cli          # "cli" (default) or "sdk-cli"
+```
+
+> [!IMPORTANT]
+> The plugin is a native CGO `c-shared` object. The CPA host that loads it **must
+> be built with `CGO_ENABLED=1`**. The stock `eceasy/cli-proxy-api` image is built
+> without CGO and will silently ignore this (and every other) `.so` plugin.
+
+The image tag above is pinned on purpose:
+
+> [!WARNING]
+> **ABI lock — always pin a version tag, never `:latest`.** The `.so` is compiled
+> against a specific CLIProxyAPI SDK version (see `.cpa-version` / `.cpa-commit`).
+> The CPA host loading it must be built against the **same** SDK version, or the
+> plugin is rejected / silently misbehaves at load time. `:latest` may resolve to
+> a different SDK version than your host. The image carries
+> `cc-mimicry.cpa-sdk-version` / `cc-mimicry.cpa-sdk-commit` OCI labels so you can
+> verify what a given tag was built against.
 
 ## What it does
 
@@ -26,7 +88,7 @@ Applied to Anthropic `/v1/messages` requests (source format `claude`/`anthropic`
      `<prefix><name[:3]><NN>`. Not md5 — the aliases stay human-readable.
    - *Server tools* (`web_search_20250305`, `computer_20250124`, …) are never
      renamed, since those names are Anthropic protocol semantics.
-2. **System prompt 3-block rewrite** — rebuilds `system` into the CLI 2.1.268 shape:
+2. **System prompt 3-block rewrite** — rebuilds `system` into the CLI 2.1.278 shape:
    `[0]` billing attribution (`cch=00000` placeholder for CPA signing),
    `[1]` surface-specific agent identity (cache ephemeral),
    `[2]` shared intro/security/tone bundle, which since 2.1.268 also carries the
@@ -41,69 +103,44 @@ Applied to Anthropic `/v1/messages` requests (source format `claude`/`anthropic`
    match the real CLI payload when absent.
 5. **Egress header override** (P4 hook) — overrides `user-agent`, `x-app`,
    `anthropic-beta`, `anthropic-version`, `x-stainless-*`, and
-   `anthropic-dangerous-direct-browser-access` to CLI 2.1.268 values via the
+   `anthropic-dangerous-direct-browser-access` to CLI 2.1.278 values via the
    CPA EgressHeaderInterceptor ABI hook (post-auth, pre-send). Strips
    CPA-injected headers absent from real CLI captures.
 
 Each transform is individually toggleable (see [Config](#config)).
 
-## Requirements
+## Config
 
-> [!IMPORTANT]
-> The plugin is a native CGO `c-shared` object. The CPA host that loads it **must
-> be built with `CGO_ENABLED=1`**. The stock `eceasy/cli-proxy-api` image is built
-> without CGO and will silently ignore this (and every other) `.so` plugin.
+| Key | Default | Effect |
+|-----|---------|--------|
+| `obfuscate_tool_names` | `true` | Rename tools + reverse on responses/stream chunks. |
+| `inject_system_prompt` | `true` | 3-block surface-aware system rewrite; relocate original system into messages. |
+| `cache_breakpoints` | `false` | Ephemeral `cache_control` on the last tool. OFF by default: CLI 2.1.278 sends none, so emitting one is a positive fingerprint discriminator. |
+| `fill_fingerprint` | `true` | Fill `temperature`/`max_tokens`/`context_management`. |
+| `surface` | `cli` | CLI entrypoint to impersonate: `cli` (interactive TUI, 11 betas) or `sdk-cli` (-p print, 10 betas). Unknown values are rejected at config load. |
 
-- Go 1.26+
-- A C compiler (gcc/clang) for CGO
-- The pinned CLIProxyAPI SDK checked out at the `go.mod` `replace` target, which
-  sits OUTSIDE the repository — a fresh clone cannot build until it is there:
+An omitted key keeps its default (`true`); set to `false` to disable a stage.
 
-  ```bash
-  scripts/setup-sdk.sh   # clones the fork at .cpa-version and verifies .cpa-commit
-  ./build.sh
-  ```
+## Building from source
 
-  The SDK comes from the `Arkptz/CLIProxyAPI` fork, not upstream: the plugin ABI
-  commits the build needs exist only there. A gitignored `go.work` can override
-  the path for a different local layout.
+Requirements: Go 1.26+, a C compiler (gcc/clang) for CGO, and the pinned
+CLIProxyAPI SDK checked out at the `go.mod` `replace` target — which sits
+OUTSIDE the repository, so a fresh clone cannot build until it is there:
 
-## GHCR artifact image
-
-The compiled `.so` is published as a distroless artifact image to GHCR. Any CPA
-Dockerfile can copy it in directly — no builder service, no volume mounts:
-
-```dockerfile
-COPY --from=ghcr.io/arkptz/cc-mimicry:v0.1.0 /plugin/cc-mimicry.so /plugins/linux/amd64/cc-mimicry.so
+```bash
+scripts/setup-sdk.sh   # clones the fork at .cpa-version and verifies .cpa-commit
+nix develop            # dev shell (Go 1.26 + CGO); optional but matches CI
+./build.sh             # -> dist/cc-mimicry.so
+make build             # same, via Makefile
+VERSION=0.3.0 ./build.sh   # stamp a version
 ```
 
-> [!WARNING]
-> **ABI lock — always pin a version tag, never `:latest`.** The `.so` is compiled
-> against a specific CLIProxyAPI SDK version (see `.cpa-version` / `.cpa-commit`).
-> The CPA host loading it must be built against the **same** SDK version, or the
-> plugin is rejected / silently misbehaves at load time. `:latest` may resolve to
-> a different SDK version than your host. Match the plugin image tag to your CPA
-> release. The image carries `cc-mimicry.cpa-sdk-version` / `cc-mimicry.cpa-sdk-commit`
-> OCI labels so you can verify what a given tag was built against.
+The SDK comes from the `Arkptz/CLIProxyAPI` fork, not upstream: the plugin ABI
+commits the build needs exist only there. A gitignored `go.work` can override
+the path for a different local layout. The plugin ID is the filename without
+extension (`cc-mimicry`).
 
-Releases are automatic (`.github/workflows/release-please.yml`): conventional
-commits (`feat:` → minor, `fix:` → patch) accumulate in a Release PR that
-release-please keeps up to date. Merge the Release PR and the `vX.Y.Z` tag,
-the GitHub Release with changelog notes, and the GHCR image follow — nothing
-to run by hand.
-
-## Build
-
-```sh
-nix develop          # enter the dev shell (Go 1.26 + CGO)
-./build.sh           # -> dist/cc-mimicry.so
-make build           # same, via Makefile
-VERSION=0.2.0 ./build.sh   # stamp a version
-```
-
-The plugin ID is the filename without extension (`cc-mimicry`).
-
-## Install
+## Manual install
 
 Drop `cc-mimicry.so` into the host's plugin directory. CPA scans, in order:
 
@@ -113,34 +150,45 @@ Drop `cc-mimicry.so` into the host's plugin directory. CPA scans, in order:
 <plugins-dir>/                             (flat fallback)
 ```
 
-Then enable it in `config.yaml`:
+## How it stays current
 
-```yaml
-plugins:
-  enabled: true
-  dir: "plugins"
-  configs:
-    cc-mimicry:
-      enabled: true
-      priority: 100
-      obfuscate_tool_names: true
-      inject_system_prompt: true
-      cache_breakpoints: false
-      fill_fingerprint: true
-      surface: cli            # "cli" (default) or "sdk-cli"
-```
+<details>
+<summary>Nightly drift check, automatic retarget, and the SDK version pin</summary>
 
-## Config
+`.github/workflows/fingerprint-nightly.yml` runs every night: it resolves the
+latest Claude Code release, fingerprints the binary against `baseline/`, captures
+the `cli` and `sdk-cli` surfaces through mitmproxy, stages any new version under
+`testdata/captures/v<version>/`, runs `scripts/nightly/retarget.py` to rewrite
+`cliTargetVersion`, `cliVersion`, `stainlessPackageVersion` and the embedded
+`shared_intro.txt`, runs the test suite, and opens a PR. Beta sets and agent
+identifiers are reported but never auto-changed — those are judgment calls.
 
-| Key | Default | Effect |
-|-----|---------|--------|
-| `obfuscate_tool_names` | `true` | Rename tools + reverse on responses/stream chunks. |
-| `inject_system_prompt` | `true` | 4-block surface-aware system rewrite; relocate original system into messages. |
-| `cache_breakpoints` | `false` | Ephemeral `cache_control` on the last tool. OFF by default: CLI 2.1.268 sends none, so emitting one is a positive fingerprint discriminator. |
-| `fill_fingerprint` | `true` | Fill `temperature`/`max_tokens`/`context_management`. |
-| `surface` | `cli` | CLI entrypoint to impersonate: `cli` (interactive TUI, 11 betas) or `sdk-cli` (-p print, 10 betas). Unknown values are rejected at config load. |
+The CLIProxyAPI SDK version is centralized in two files:
 
-An omitted key keeps its default (`true`); set to `false` to disable a stage.
+- `.cpa-version` — the git tag (currently `v7.2.157-plugin3`)
+- `.cpa-commit` — the pinned commit SHA, verified at Docker/CI clone time so a
+  moved upstream tag cannot silently swap the SDK baked into the `.so`
+
+To bump: update both files. The Dockerfile, CI, and Makefile all derive from them.
+
+Releases are automatic (`.github/workflows/release-please.yml`): conventional
+commits (`feat:` → minor, `fix:` → patch) accumulate in a Release PR that
+release-please keeps up to date. Merge it, and the `vX.Y.Z` tag, the GitHub
+Release with changelog notes, and the GHCR image follow — nothing to run by hand.
+
+</details>
+
+<details>
+<summary>How the reverse pass is correlated</summary>
+
+The C ABI has no shared per-request context across interceptor calls, so the
+plugin correlates the forward `request.intercept_before` hook (which builds the
+tool-name rewrite map) with the `response.intercept_after` /
+`response.intercept_stream_chunk` hooks via a stable signature over the request
+body (plus a couple of request-id headers). The map lives in a bounded in-process
+FIFO; entries for requests that never reach the response side age out.
+
+</details>
 
 ## Development
 
@@ -153,32 +201,22 @@ make vuln            # govulncheck
 ./scripts/ci-local.sh   # replay CI jobs locally via act
 ```
 
-## SDK version pin
-
-The CLIProxyAPI SDK version is centralized in two files:
-
-- `.cpa-version` — the git tag (e.g. `v7.2.51`)
-- `.cpa-commit` — the pinned commit SHA, verified at Docker/CI clone time so a
-  moved upstream tag cannot silently swap the SDK baked into the `.so`.
-
-To bump: update both files. The Dockerfile, CI, and Makefile all derive from them.
-
-## How the reverse pass is correlated
-
-The C ABI has no shared per-request context across interceptor calls, so the
-plugin correlates the forward `request.intercept_before` hook (which builds the
-tool-name rewrite map) with the `response.intercept_after` /
-`response.intercept_stream_chunk` hooks via a stable signature over the request
-body (plus a couple of request-id headers). The map lives in a bounded in-process
-FIFO; entries for requests that never reach the response side age out.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full local setup and quality
+gates, and [AGENTS.md](AGENTS.md) for the project conventions.
 
 ## Decisions
 
 This project tracks decisions with `dg` under `docs/`. See
 [ADR-002](docs/architecture/adr-002-cgo-c-shared-plugin-build-and-ghcr-artifact-image.md)
-for the CGO c-shared build + GHCR artifact-image design, and [AGENTS.md](AGENTS.md)
-for the contributor workflow.
+for the CGO c-shared build + GHCR artifact-image design, and
+[ADR-005](docs/architecture/adr-005-emitting-fields-the-real-cli-omits-defeats-the-fingerprint.md)
+for why the plugin never emits a field the real CLI omits.
+
+## Security
+
+Report vulnerabilities privately — see [SECURITY.md](SECURITY.md). Participation
+is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
-MIT
+[MIT](LICENSE)

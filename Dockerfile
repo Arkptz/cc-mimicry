@@ -3,7 +3,7 @@
 # against bookworm glibc, then packages it in a distroless artifact carrier.
 #
 # Consumer line (pin a version tag — do NOT use :latest):
-#   COPY --from=ghcr.io/arkptz/cc-mimicry:v0.2.0 /plugin/cc-mimicry.so /plugins/linux/amd64/cc-mimicry.so
+#   COPY --from=ghcr.io/arkptz/cc-mimicry:0.3.0 /plugin/cc-mimicry.so /plugins/linux/amd64/cc-mimicry.so
 
 ARG GO_VERSION=1.26
 ARG CPA_VERSION=v7.2.157-plugin3
