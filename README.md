@@ -74,9 +74,57 @@ plugins:
       enabled: true
       priority: 100
       surface: cli          # "cli" (default) or "sdk-cli"
+
+# Required: CPA's own Claude Code disguise runs after the plugin and rewrites
+# system[] with its own pinned cc_version, undoing the mimicry. See below.
+disable-claude-cloak-mode: true
 ```
 
 `docker-compose.yml` builds and runs the same image locally from source.
+
+### Turn CPA's own cloaking off
+
+`disable-claude-cloak-mode: true` is the setting that matters. CPA ships a
+Claude Code disguise of its own (`applyCloaking`) that rewrites `system[]` for
+any request it does not recognise as native Claude Code. It runs *after* the
+plugin's request interceptor and overwrites the billing block with CPA's
+`DefaultClaudeVersion`, which is pinned to an older CLI — so the plugin does the
+work and the host throws it away. The symptom is an HTTP 400 from Anthropic,
+`Claude Code <old version> does not support this model; version <newer> or newer
+is required`, while the outbound `User-Agent` already shows the version this
+plugin targets: the headers come from the plugin, the body from the cloak.
+
+With the cloak off the plugin owns every `/v1/messages` request end to end, and
+nothing else needs configuring.
+
+#### If you also serve `/v1/chat/completions`
+
+The plugin's interceptor is gated on the `claude`/`anthropic` source format, so
+OpenAI-format requests never reach it. With cloaking off they go upstream
+carrying CPA's own header fingerprint and no Claude Code system block at all.
+If you route that traffic to Anthropic, point CPA's defaults at the same CLI
+version the plugin targets, otherwise skip this block entirely:
+
+```yaml
+claude-header-defaults:
+  user-agent: "claude-cli/2.1.280 (external, cli)"
+  package-version: "0.112.1"
+  runtime-version: "v26.3.0"
+  os: "Linux"
+  arch: "x64"
+```
+
+The version values there are rewritten by the nightly retarget along with the
+plugin's own constants.
+
+#### Home/worker clusters
+
+When CPA runs as a Home control plane with workers, the worker is started with
+`-home-jwt` and no `-config`: it fetches its entire configuration from Home and
+never reads a local `config.yaml`. The settings above, and the `plugins` block,
+therefore belong in the *Home* config. A worker with `cc-mimicry.so` present on
+disk but `plugins.enabled: false` in the Home config never loads it, and logs
+nothing about the plugin at all.
 
 ### Bringing your own host
 
