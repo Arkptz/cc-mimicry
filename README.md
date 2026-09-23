@@ -58,7 +58,7 @@ SDK tree in one build, so they cannot drift apart.
 ```bash
 docker run --rm -p 8317:8317 \
   -v "$PWD/config.yaml:/CLIProxyAPI/config.yaml:ro" \
-  ghcr.io/arkptz/cpa-mimicry:0.3.0
+  ghcr.io/arkptz/cpa-mimicry:0.4.0
 ```
 
 <!-- x-release-please-end -->
@@ -86,7 +86,7 @@ the artifact image:
 <!-- x-release-please-start-version -->
 
 ```dockerfile
-COPY --from=ghcr.io/arkptz/cc-mimicry:0.3.0 /plugin/cc-mimicry.so /plugins/linux/amd64/cc-mimicry.so
+COPY --from=ghcr.io/arkptz/cc-mimicry:0.4.0 /plugin/cc-mimicry.so /plugins/linux/amd64/cc-mimicry.so
 ```
 
 <!-- x-release-please-end -->
