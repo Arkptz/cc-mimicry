@@ -6,7 +6,7 @@
 the native Claude Code CLI — so pooled subscriptions are not flagged as
 third-party clients.**
 
-Currently impersonating Claude Code CLI <!-- cc-target-version:start -->**2.1.278**<!-- cc-target-version:end -->,
+Currently impersonating Claude Code CLI <!-- cc-target-version:start -->**2.1.280**<!-- cc-target-version:end -->,
 kept current by a nightly drift check against the real binary.
 
 [![CI](https://github.com/Arkptz/cc-mimicry/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Arkptz/cc-mimicry/actions/workflows/ci.yml?query=branch%3Amain)
