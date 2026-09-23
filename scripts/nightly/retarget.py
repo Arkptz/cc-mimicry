@@ -50,6 +50,14 @@ README_VERSION_RE = re.compile(
     re.S,
 )
 
+# The host-settings snippet spells out a claude-header-defaults block whose
+# user-agent and package-version must track the same target as the plugin
+# constants, or copy-pasting it reintroduces the version-gate 400.
+README_HEADER_UA_RE = re.compile(
+    r'(^\s*user-agent:\s*"claude-cli/)[0-9]+(?:\.[0-9]+)*(\s\(external,\s*cli\)")', re.M
+)
+README_HEADER_PKG_RE = re.compile(r'(^\s*package-version:\s*")[^"]*(")', re.M)
+
 
 def die(msg: str) -> None:
     print(f"retarget: error: {msg}", file=sys.stderr)
@@ -137,10 +145,14 @@ def main() -> int:
     src = readme.read_text(encoding="utf-8")
     if not README_VERSION_RE.search(src):
         die("README.md: cc-target-version markers are missing")
-    readme.write_text(
-        README_VERSION_RE.sub(rf"\g<1>**{version}**\g<2>", src, count=1),
-        encoding="utf-8",
-    )
+    src = README_VERSION_RE.sub(rf"\g<1>**{version}**\g<2>", src, count=1)
+    if not README_HEADER_UA_RE.search(src):
+        die("README.md: claude-header-defaults user-agent line is missing")
+    src = README_HEADER_UA_RE.sub(rf"\g<1>{version}\g<2>", src, count=1)
+    if not README_HEADER_PKG_RE.search(src):
+        die("README.md: claude-header-defaults package-version line is missing")
+    src = README_HEADER_PKG_RE.sub(rf"\g<1>{pkg_cli}\g<2>", src, count=1)
+    readme.write_text(src, encoding="utf-8")
     touched.append(str(readme.relative_to(repo)))
 
     for name in touched:
