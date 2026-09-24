@@ -12,8 +12,8 @@ import (
 
 // rewriteStore carries the per-request tool-name rewrite map from the request
 // interceptor to the response/stream interceptors. The plugin C ABI has no
-// shared context object across interceptor calls, so we key the map by a stable
-// per-request signature derived from the request body + headers.
+// shared context object across interceptor calls, so the map is keyed by
+// rewriteKey.
 //
 // Entries are single-use-ish: a bounded FIFO (insertion-order eviction, not
 // recency-promoting) keeps memory flat even if some requests never reach the
@@ -39,10 +39,17 @@ func interceptRequestBefore(raw []byte) ([]byte, error) {
 	}
 
 	// Defensive guard: count_tokens payloads have no `messages` key. Skip the
-	// body transform entirely so the plugin does not emit a billing block on a
-	// non-/v1/messages call.
+	// system and fingerprint transforms so the plugin does not emit a billing
+	// block on a non-/v1/messages call, but still apply the static tool-name
+	// rules: the upstream rejects an ^mcp_[a-z0-9] tool name on any route.
 	if !gjson.GetBytes(req.Body, "messages").Exists() {
-		return okEnvelope(pluginapi.RequestInterceptResponse{})
+		resp := pluginapi.RequestInterceptResponse{}
+		if cfg.ObfuscateToolNames {
+			if rw := buildToolNameRewrite(req.Body, false); !rw.empty() {
+				resp.Body = applyToolNameRewriteToBody(req.Body, rw, false)
+			}
+		}
+		return okEnvelope(resp)
 	}
 
 	// The effective anthropic-beta is what the client sent; context_management
@@ -61,7 +68,7 @@ func interceptRequestBefore(raw []byte) ([]byte, error) {
 	}
 
 	if cfg.ObfuscateToolNames && !rw.empty() {
-		rewriteStore.put(requestSignature(newBody, req.Headers), rw)
+		rewriteStore.put(rewriteKey(req.RequestID, newBody, req.Headers), rw)
 	}
 	return okEnvelope(resp)
 }
@@ -79,11 +86,14 @@ func interceptResponse(raw []byte) ([]byte, error) {
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, err
 	}
-	rw := rewriteStore.get(requestSignature(req.RequestBody, req.RequestHeaders))
+	rw := rewriteStore.get(rewriteKey(req.RequestID, req.RequestBody, req.RequestHeaders))
 	// A stored map means the matching forward request WAS obfuscated, so its
 	// response must be restored even if obfuscation was disabled mid-flight.
-	// Only the static-prefix fallback (rw == nil) is gated on the current config.
-	if rw == nil && !currentConfig().ObfuscateToolNames {
+	// With a RequestID a missing map means the forward pass renamed nothing, or
+	// its entry was evicted from the bounded store (ADR-006); either way the
+	// static-prefix fallback, which could un-alias a client's own tool name, is
+	// skipped. It remains for hosts that send no RequestID, gated on the config.
+	if rw == nil && (req.RequestID != "" || !currentConfig().ObfuscateToolNames) {
 		return okEnvelope(pluginapi.ResponseInterceptResponse{})
 	}
 	restored := restoreToolNamesInBytes(req.Body, rw)
@@ -104,10 +114,10 @@ func interceptStreamChunk(raw []byte) ([]byte, error) {
 	if req.ChunkIndex == pluginapi.StreamChunkHeaderInitIndex || len(req.Body) == 0 {
 		return okEnvelope(pluginapi.StreamChunkInterceptResponse{})
 	}
-	rw := rewriteStore.get(requestSignature(req.RequestBody, req.RequestHeaders))
+	rw := rewriteStore.get(rewriteKey(req.RequestID, req.RequestBody, req.RequestHeaders))
 	// A stored map means the matching forward request WAS obfuscated, so its
 	// chunks must be restored even if obfuscation was disabled mid-stream.
-	if rw == nil && !currentConfig().ObfuscateToolNames {
+	if rw == nil && (req.RequestID != "" || !currentConfig().ObfuscateToolNames) {
 		return okEnvelope(pluginapi.StreamChunkInterceptResponse{})
 	}
 	restored := restoreToolNamesInBytes(req.Body, rw)
@@ -116,6 +126,18 @@ func interceptStreamChunk(raw []byte) ([]byte, error) {
 		resp.Body = restored
 	}
 	return okEnvelope(resp)
+}
+
+// rewriteKey correlates the forward hook with the reverse hooks. The host
+// passes one lifecycle RequestID to request.intercept_before,
+// response.intercept_after and every response.intercept_stream_chunk call; ABI
+// schema v3+ stream chunks carry no RequestBody, so a body signature cannot
+// match there. The signature is kept for hosts that send no RequestID.
+func rewriteKey(requestID string, body []byte, headers http.Header) string {
+	if requestID != "" {
+		return "id:" + requestID
+	}
+	return requestSignature(body, headers)
 }
 
 // isAnthropicClaudeRequest reports whether a request is an Anthropic /v1/messages
@@ -141,8 +163,8 @@ func headerValue(h http.Header, key string) string {
 	return h.Get(key)
 }
 
-// boundedRewriteStore is a tiny mutex-guarded bounded FIFO keyed by request
-// signature. get() does not promote entries, so eviction is insertion-order.
+// boundedRewriteStore is a tiny mutex-guarded bounded FIFO keyed by
+// rewriteKey. get() does not promote entries, so eviction is insertion-order.
 type boundedRewriteStore struct {
 	mu       sync.Mutex
 	capacity int

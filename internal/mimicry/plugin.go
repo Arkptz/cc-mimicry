@@ -44,6 +44,10 @@ func Handle(method string, request []byte) ([]byte, error) {
 		return interceptStreamChunk(request)
 	case pluginabi.MethodEgressHeaderIntercept:
 		return interceptEgressHeaders(request)
+	case pluginabi.MethodRequestNormalize:
+		return normalizeRequest(request)
+	case pluginabi.MethodResponseNormalizeBefore:
+		return normalizeResponseBefore(request)
 	default:
 		return ErrorEnvelope("unknown_method", "unknown method: "+method), nil
 	}
@@ -65,10 +69,12 @@ func pluginRegistration() registration {
 			ConfigFields:     configFields(),
 		},
 		Capabilities: registrationCapability{
-			RequestInterceptor:      true,
-			ResponseInterceptor:     true,
-			StreamChunkInterceptor:  true,
-			EgressHeaderInterceptor: true,
+			RequestInterceptor:       true,
+			ResponseInterceptor:      true,
+			StreamChunkInterceptor:   true,
+			EgressHeaderInterceptor:  true,
+			RequestNormalizer:        true,
+			ResponseBeforeTranslator: true,
 		},
 	}
 }
@@ -81,12 +87,14 @@ type registration struct {
 }
 
 // registrationCapability mirrors the host rpcCapabilities JSON tags for the
-// three interceptor capabilities this plugin implements.
+// capabilities this plugin implements.
 type registrationCapability struct {
-	RequestInterceptor      bool `json:"request_interceptor"`
-	ResponseInterceptor     bool `json:"response_interceptor"`
-	StreamChunkInterceptor  bool `json:"response_stream_interceptor"`
-	EgressHeaderInterceptor bool `json:"egress_header_interceptor"`
+	RequestInterceptor       bool `json:"request_interceptor"`
+	ResponseInterceptor      bool `json:"response_interceptor"`
+	StreamChunkInterceptor   bool `json:"response_stream_interceptor"`
+	EgressHeaderInterceptor  bool `json:"egress_header_interceptor"`
+	RequestNormalizer        bool `json:"request_normalizer"`
+	ResponseBeforeTranslator bool `json:"response_before_translator"`
 }
 
 // envelope mirrors pluginabi.Envelope for local marshaling.

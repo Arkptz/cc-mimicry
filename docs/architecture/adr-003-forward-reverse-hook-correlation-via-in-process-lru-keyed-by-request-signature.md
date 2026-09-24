@@ -6,7 +6,8 @@ code_paths:
 date: 2026-07-09
 related:
 - ADR-002
-status: accepted
+status: superseded
+superseded_by: ADR-006
 tags:
 - cgo
 - plugin

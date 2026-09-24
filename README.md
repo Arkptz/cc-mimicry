@@ -94,16 +94,32 @@ work and the host throws it away. The symptom is an HTTP 400 from Anthropic,
 is required`, while the outbound `User-Agent` already shows the version this
 plugin targets: the headers come from the plugin, the body from the cloak.
 
-With the cloak off the plugin owns every `/v1/messages` request end to end, and
-nothing else needs configuring.
+With the cloak off the plugin owns every `/v1/messages` request end to end.
+A `cloak_mode: always` on an auth or API key turns the cloak back on for that
+credential, so leave it unset.
 
-#### If you also serve `/v1/chat/completions`
+Turning the cloak off also turns off CPA's MCP tool-name aliasing, which only
+runs inside the cloak. The plugin takes over that job: Anthropic rejects any
+request whose tool names match `^mcp_[a-z0-9]` with a 400 "Third-party apps now
+draw from your extra usage", so the plugin renames such tools to `cc_mcp_…` on
+the way up and restores the original names in the response. This covers
+`/v1/messages`, `/v1/messages/count_tokens` and the translated routes below,
+except models served from a `claude-api-key` entry with `is-compat: true`: CPA
+translates those requests outside the translator registry, so the plugin never
+sees them.
 
-The plugin's interceptor is gated on the `claude`/`anthropic` source format, so
-OpenAI-format requests never reach it. With cloaking off they go upstream
-carrying CPA's own header fingerprint and no Claude Code system block at all.
-If you route that traffic to Anthropic, point CPA's defaults at the same CLI
-version the plugin targets, otherwise skip this block entirely:
+#### If you also serve `/v1/chat/completions` or `/v1/responses`
+
+The plugin's request interceptor is gated on the `claude`/`anthropic` source
+format, so OpenAI-format requests never reach it and go upstream without the
+Claude Code system block. They still get the plugin's tool-name rewrite, which
+runs as a request normalizer after CPA translates them into the Claude format,
+and the plugin's egress headers, which apply to every request the Claude
+executor sends. What they do not get from the plugin is the `cc_version` in the
+billing block: CPA derives it from the `user-agent` in `claude-header-defaults`
+and falls back to an older pinned CLI version without it. If you route that
+traffic to Anthropic, point the defaults at the version the plugin targets,
+otherwise skip this block entirely:
 
 ```yaml
 claude-header-defaults:
@@ -114,8 +130,9 @@ claude-header-defaults:
   arch: "x64"
 ```
 
-The version values there are rewritten by the nightly retarget along with the
-plugin's own constants.
+The nightly retarget rewrites `user-agent` and `package-version` there along
+with the plugin's own constants. `runtime-version`, `os` and `arch` are not
+retargeted; the plugin's egress headers override them whenever it is loaded.
 
 #### Home/worker clusters
 
@@ -152,12 +169,15 @@ That host must be built with `CGO_ENABLED=1` — the plugin is a native
 
 ## What it does
 
-Applied to Anthropic `/v1/messages` requests (source format `claude`/`anthropic`):
+Applied to Anthropic `/v1/messages` requests (source format `claude`/`anthropic`).
+Requests CPA translates into the Claude format from other formats get only the
+static tool-name rules, as a request normalizer, with the reverse applied to
+each Claude response line before CPA translates it back.
 
 1. **Tool-name obfuscation** — renames `tools[*].name`, `tool_choice.name` and
    historical `tool_use.name` to Claude-Code-like aliases, then reverses them on
    the response and on every stream chunk.
-   - *Static prefix map* (`sessions_` → `sessions_`, `session_` → `session_`).
+   - *Static prefix map*, applied at any tool count (`sessions_` → `cc_sess_`, `session_` → `cc_ses_`, and `mcp_` → `cc_mcp_` when the next character is a lowercase letter or digit).
    - *Dynamic map* when a request declares more than 5 renameable tools: a
      stable-per-toolset FNV-seeded shuffle picks a readable prefix and builds
      `<prefix><name[:3]><NN>`. Not md5 — the aliases stay human-readable.

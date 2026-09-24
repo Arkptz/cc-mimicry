@@ -6,11 +6,13 @@ code_paths:
 - internal/mimicry/egress_headers.go
 - internal/mimicry/toolrewrite.go
 - internal/mimicry/config.go
+- internal/mimicry/normalizers.go
 date: 2026-07-10
 depends_on:
 - ADR-002
 implemented_by:
 - ADR-003
+- ADR-006
 priority: must
 related:
 - ADR-004
@@ -32,12 +34,12 @@ As a CPA operator, I want the plugin to transform Anthropic /v1/messages request
 - Two surfaces are supported: `cli` (default — 11 beta tokens including redact-thinking-2026-02-12) and `sdk-cli` (10 beta tokens, omits redact-thinking). Surface config in plugin drives both body blocks and egress headers. The Anthropic-Beta header is wholesale-replaced with the surface's exact token set; client-requested betas outside the set are intentionally dropped for fingerprint fidelity.
 - CPA xxHash64 signing (cch field): CPA's signer runs independently of ShouldCloak, over the final request body after the plugin has written the cch=00000 placeholder in block [0]. The skip-guard at CPA:1865 defers to the plugin billing prefix so no double-injection occurs.
 - Dead code removed: claudeCodeHeaderOverrides, mergeClaudeCodeBeta, headerValue, and NormalizeHeaders are no longer part of the pipeline; the normalize_headers config toggle is obsolete.
-- Tool-name obfuscation uses a static prefix map for 5 or fewer mimicable tools, and a dynamic FNV-seeded readable-alias shuffle for more than 5.
+- Tool-name obfuscation uses a dynamic FNV-seeded readable-alias shuffle when a request declares more than 5 mimicable tools, and a static prefix map (`sessions_`→`cc_sess_`, `session_`→`cc_ses_`, `mcp_`→`cc_mcp_`) for every tool the dynamic map does not cover, at any tool count. The `mcp_` entry applies only when the next byte is `[a-z0-9]`: Anthropic rejects `^mcp_[a-z0-9]` tool names with HTTP 400 "Third-party apps now draw from your extra usage", while the CLI's own `mcp__server__tool` names pass. An alias that equals another declared tool name is not applied.
 - Server tools (type not in {"", "function", "custom"}, e.g. web_search_20250305, computer_20250124) are NEVER renamed — those names are Anthropic protocol semantics.
 - context_management is injected only when the effective anthropic-beta header carries context-management-2025-06-27; a client-provided context_management is stripped when that beta token is absent.
-- Reverse pass: both response.intercept_after and response.intercept_stream_chunk apply restoreToolNamesInBytes using the LRU-retrieved rewrite map; the stream header-init chunk (ChunkIndex == -1, empty body) is skipped.
+- Reverse pass: both response.intercept_after and response.intercept_stream_chunk apply restoreToolNamesInBytes using the rewrite map stored under the lifecycle RequestID (ADR-006); the stream header-init chunk (ChunkIndex == -1, empty body) is skipped.
 - Cache breakpoint: injected on tools[-1].cache_control; a client-provided ttl is preserved; a bare cache_control gets ttl "1h" added; an absent one gets the full {"type":"ephemeral","ttl":"1h"}. This stage is OFF by default (`cache_breakpoints: false`) — the CLI 2.1.268 captures carry no `cache_control` on any of their tools (0 of 221 for `cli`, 0 of 212 for `sdk-cli`), so emitting one is a positive fingerprint discriminator rather than camouflage; see the fingerprint-fidelity ADR. The stage is retained for operators who knowingly trade fidelity for prompt-caching savings.
-- Source-format filter: only "claude"/"anthropic"/"" source formats are processed; translated OpenAI/Gemini paths pass through unchanged.
+- Source-format filter: the full transform (system rewrite, fingerprint fill, static and dynamic tool names) runs only for "claude"/"anthropic"/"" source formats. A body without `messages` (count_tokens) gets only the static tool-name rules. Requests CPA translates into the Claude format from another format get only the static tool-name rules, via request.normalize; response.normalize_before restores them by rewriting only `tool_use` name fields of each Claude response line, skipping names that appear in the client's original request.
 - Design note: tool-name aliases are human-readable and intentionally NON-cryptographic — FNV-64a is used only as a stable seed for a deterministic shuffle, not as a security primitive. Switching to a cryptographic hash would break cache-key stability and is explicitly out of scope.
 ## Acceptance Criteria
 - Each toggle (obfuscate_tool_names, inject_system_prompt, cache_breakpoints, fill_fingerprint) independently disables its stage; normalize_headers is no longer a valid toggle (dead code removed).

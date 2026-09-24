@@ -17,6 +17,10 @@ api-keys:
 
 debug: false
 
+# Required: CPA's own Claude Code disguise runs after the plugin and rewrites
+# system[] with its own pinned cc_version, undoing the mimicry. See the README.
+disable-claude-cloak-mode: true
+
 # Plugin subsystem — cc-mimicry.so is baked into /CLIProxyAPI/plugins/linux/amd64/.
 # Must be enabled for the plugin to load.
 plugins:

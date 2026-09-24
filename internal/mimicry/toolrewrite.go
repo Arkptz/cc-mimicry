@@ -1,6 +1,7 @@
 package mimicry
 
 import (
+	"bytes"
 	"fmt"
 	"hash/fnv"
 	"math/rand"
@@ -11,12 +12,16 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// staticToolNameRewrites is the static prefix map, identical to sub2api's
-// gateway_tool_rewrite.go / Parrot TOOL_NAME_REWRITES. Only tools whose name
-// starts with one of these prefixes is renamed by the static path.
+// staticToolNameRewrites: sub2api/Parrot TOOL_NAME_REWRITES plus "mcp_".
+//
+// Anthropic answers 400 "Third-party apps now draw from your extra usage" when
+// any tool name matches ^mcp_[a-z0-9] (bisected live 2026-09-23). The real CLI
+// names MCP tools mcp__server__tool (double underscore), which passes, so
+// sanitizeToolName applies the "mcp_" entry only when the next byte is [a-z0-9].
 var staticToolNameRewrites = map[string]string{
 	"sessions_": "cc_sess_",
 	"session_":  "cc_ses_",
+	"mcp_":      "cc_mcp_",
 }
 
 // fakeToolNamePrefixes is the dynamic-mapping prefix pool, identical to Parrot
@@ -86,11 +91,23 @@ func sanitizeToolName(name string, dynamic map[string]string) string {
 		}
 	}
 	for prefix, replacement := range staticToolNameRewrites {
-		if strings.HasPrefix(name, prefix) {
-			return replacement + name[len(prefix):]
+		if !strings.HasPrefix(name, prefix) {
+			continue
 		}
+		if prefix == "mcp_" && !startsLowerAlnum(name[len(prefix):]) {
+			continue
+		}
+		return replacement + name[len(prefix):]
 	}
 	return name
+}
+
+func startsLowerAlnum(s string) bool {
+	if s == "" {
+		return false
+	}
+	c := s[0]
+	return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
 }
 
 // shouldMimicToolName reports whether a tool of the given type may be renamed.
@@ -104,6 +121,12 @@ func shouldMimicToolName(toolType string) bool {
 // buildToolNameRewriteFromBody scans tools[*].name and builds the rewrite map.
 // Returns nil when nothing needs renaming. Scan-only; body is not modified here.
 func buildToolNameRewriteFromBody(body []byte) *toolNameRewrite {
+	return buildToolNameRewrite(body, true)
+}
+
+// buildToolNameRewrite is buildToolNameRewriteFromBody with the dynamic alias
+// stage optional. Static-only rewrites need no per-request state to reverse.
+func buildToolNameRewrite(body []byte, dynamicAliases bool) *toolNameRewrite {
 	tools := gjson.GetBytes(body, "tools")
 	if !tools.IsArray() {
 		return nil
@@ -121,13 +144,26 @@ func buildToolNameRewriteFromBody(body []byte) *toolNameRewrite {
 		mimicableNames = append(mimicableNames, name)
 	}
 
-	dynamic := buildDynamicToolMap(mimicableNames)
+	var dynamic map[string]string
+	if dynamicAliases {
+		dynamic = buildDynamicToolMap(mimicableNames)
+	}
+
+	declared := make(map[string]struct{}, len(mimicableNames))
+	for _, name := range mimicableNames {
+		declared[name] = struct{}{}
+	}
 
 	rw := &toolNameRewrite{forward: make(map[string]string)}
 	reverse := make(map[string]string)
 	for _, name := range mimicableNames {
 		fake := sanitizeToolName(name, dynamic)
 		if fake == name {
+			continue
+		}
+		// An alias equal to another declared tool would make two tools share a
+		// name and the reverse ambiguous; leave this one as the client sent it.
+		if _, taken := declared[fake]; taken {
 			continue
 		}
 		rw.forward[name] = fake
@@ -257,21 +293,60 @@ func applyToolsLastCacheBreakpoint(body []byte) []byte {
 	return body
 }
 
-// restoreToolNamesInBytes reverses fake -> real on a response chunk. Applies the
-// per-request rewrite (length-desc) first, then static prefixes. rw may be nil.
+// restoreToolNamesInBytes reverses fake -> real on a response chunk: the
+// per-request rewrite (length-desc) when rw is set, otherwise the static
+// prefixes.
 func restoreToolNamesInBytes(data []byte, rw *toolNameRewrite) []byte {
 	if len(data) == 0 {
 		return data
 	}
 	if rw != nil {
+		// The map already holds this request's static renames; applying the
+		// static prefixes too would un-alias a client tool that is really
+		// named like an alias.
 		for _, pair := range rw.reverseOrdered {
-			data = replaceAllBytes(data, pair[0], pair[1])
+			data = replaceWholeNames(data, pair[0], pair[1])
 		}
+		return data
 	}
 	for prefix, replacement := range staticToolNameRewrites {
 		data = replaceAllBytes(data, replacement, prefix)
 	}
 	return data
+}
+
+// replaceWholeNames replaces from with to only where from is a whole
+// identifier: the bytes around it are not letters, digits, '_' or '-'. A
+// longer client tool name that merely starts with an alias stays intact.
+func replaceWholeNames(data []byte, from, to string) []byte {
+	if len(data) == 0 || from == "" || from == to || !bytes.Contains(data, []byte(from)) {
+		return data
+	}
+	var out []byte
+	last := 0
+	for i := 0; ; {
+		j := bytes.Index(data[i:], []byte(from))
+		if j < 0 {
+			break
+		}
+		start, end := i+j, i+j+len(from)
+		if (start == 0 || !isNameByte(data[start-1])) && (end == len(data) || !isNameByte(data[end])) {
+			out = append(out, data[last:start]...)
+			out = append(out, to...)
+			last = end
+			i = end
+			continue
+		}
+		i = start + 1
+	}
+	if out == nil {
+		return data
+	}
+	return append(out, data[last:]...)
+}
+
+func isNameByte(c byte) bool {
+	return c == '_' || c == '-' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
 
 func replaceAllBytes(data []byte, from, to string) []byte {

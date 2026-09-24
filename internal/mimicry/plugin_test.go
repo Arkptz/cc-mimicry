@@ -39,9 +39,11 @@ func TestHandleRegisterReturnsCapabilities(t *testing.T) {
 		SchemaVersion uint32             `json:"schema_version"`
 		Metadata      pluginapi.Metadata `json:"metadata"`
 		Capabilities  struct {
-			RequestInterceptor     bool `json:"request_interceptor"`
-			ResponseInterceptor    bool `json:"response_interceptor"`
-			StreamChunkInterceptor bool `json:"response_stream_interceptor"`
+			RequestInterceptor       bool `json:"request_interceptor"`
+			ResponseInterceptor      bool `json:"response_interceptor"`
+			StreamChunkInterceptor   bool `json:"response_stream_interceptor"`
+			RequestNormalizer        bool `json:"request_normalizer"`
+			ResponseBeforeTranslator bool `json:"response_before_translator"`
 		} `json:"capabilities"`
 	}
 	if err := json.Unmarshal(env.Result, &reg); err != nil {
@@ -50,7 +52,8 @@ func TestHandleRegisterReturnsCapabilities(t *testing.T) {
 	if reg.Metadata.Name != "cc-mimicry" {
 		t.Fatalf("plugin name = %q", reg.Metadata.Name)
 	}
-	if !reg.Capabilities.RequestInterceptor || !reg.Capabilities.ResponseInterceptor || !reg.Capabilities.StreamChunkInterceptor {
+	c := reg.Capabilities
+	if !c.RequestInterceptor || !c.ResponseInterceptor || !c.StreamChunkInterceptor || !c.RequestNormalizer || !c.ResponseBeforeTranslator {
 		t.Fatalf("missing capability flags: %+v", reg.Capabilities)
 	}
 	if len(reg.Metadata.ConfigFields) == 0 {
