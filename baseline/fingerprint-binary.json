@@ -59,9 +59,9 @@
     "user-profiles-2026-03-24",
     "web-search-2025-03-05"
   ],
-  "ua_embedded_version": "2.1.280",
+  "ua_embedded_version": "2.1.281",
   "user_agent_template": "claude-cli/<> (external, <><><><>)",
-  "version": "2.1.280",
+  "version": "2.1.281",
   "x_app_values": [
     "cli",
     "sdk-cli",
