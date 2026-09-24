@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/Arkptz/cc-mimicry/compare/v0.4.0...v0.5.0) (2026-09-24)
+
+
+### Features
+
+* retarget fingerprint to 2.1.281 ([8cc55c5](https://github.com/Arkptz/cc-mimicry/commit/8cc55c564f5f146fb9c3ac2a1fe37a4f88bfdadf))
+
+
+### Bug Fixes
+
+* alias mcp_ tool names on every route and fix the stream reverse ([02ef439](https://github.com/Arkptz/cc-mimicry/commit/02ef439e64c9e44a0dafd730c45f31a5c447dfa2))
+
 ## [0.4.0](https://github.com/Arkptz/cc-mimicry/compare/v0.3.0...v0.4.0) (2026-09-23)
 
 
