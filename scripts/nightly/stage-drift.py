@@ -103,11 +103,14 @@ def compare_fingerprints(committed: dict, fresh: dict) -> tuple[bool, list[str]]
     # it; the committed 2.1.268 fixtures predate the field, hence the guard.
     old_t = committed.get("tools_shape") or {}
     new_t = fresh.get("tools_shape") or {}
-    if "core_count" in old_t and "core_count" in new_t:
-        if old_t.get("core_count") != new_t.get("core_count"):
-            findings.append(
-                f"tools_shape.core_count: {old_t.get('core_count')!r} -> {new_t.get('core_count')!r}"
-            )
+    if (
+        "core_count" in old_t
+        and "core_count" in new_t
+        and old_t.get("core_count") != new_t.get("core_count")
+    ):
+        findings.append(
+            f"tools_shape.core_count: {old_t.get('core_count')!r} -> {new_t.get('core_count')!r}"
+        )
     for key in ("with_cache_control", "last_cache_control"):
         if old_t.get(key) != new_t.get(key):
             findings.append(f"tools_shape.{key}: {old_t.get(key)!r} -> {new_t.get(key)!r}")

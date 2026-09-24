@@ -47,7 +47,7 @@ SESSION_GUIDANCE_MARKER = "# Session-specific guidance"
 # remembering to edit it.
 README_VERSION_RE = re.compile(
     r"(<!-- cc-target-version:start -->).*?(<!-- cc-target-version:end -->)",
-    re.S,
+    re.DOTALL,
 )
 
 # The host-settings snippet spells out a claude-header-defaults block whose
@@ -56,11 +56,11 @@ README_VERSION_RE = re.compile(
 README_HEADER_UA_RE = re.compile(
     r'(^[ \t]*claude-header-defaults:[ \t]*\n(?:[ \t]+.*\n)*?[ \t]+user-agent:\s*"claude-cli/)'
     r'[0-9]+(?:\.[0-9]+)*(\s\(external,\s*cli\)")',
-    re.M,
+    re.MULTILINE,
 )
 README_HEADER_PKG_RE = re.compile(
     r'(^[ \t]*claude-header-defaults:[ \t]*\n(?:[ \t]+.*\n)*?[ \t]+package-version:\s*")[^"]*(")',
-    re.M,
+    re.MULTILINE,
 )
 
 
@@ -94,7 +94,7 @@ def replace_const(source: str, name: str, new_value: str, path: Path) -> str:
     # (`const x = "v"` or plain `x = "v"` inside a const block), indented or
     # not, with an optional trailing comment.
     pattern = re.compile(
-        rf'(^[\t ]*(?:const\s+)?{name}\s*=\s*)"[^"]*"(\s*(?://.*)?$)', re.M
+        rf'(^[\t ]*(?:const\s+)?{name}\s*=\s*)"[^"]*"(\s*(?://.*)?$)', re.MULTILINE
     )
     if not pattern.search(source):
         die(f"{path}: cannot find `{name} = \"...\"` to retarget")

@@ -14,11 +14,11 @@ import argparse
 import json
 import re
 import sys
-from datetime import date
+from datetime import UTC, datetime
 from typing import Any
 
-from mitmproxy import io as mitm_io
 from mitmproxy import http
+from mitmproxy import io as mitm_io
 
 # Header values that must never land in a committed fixture.
 SECRET_HEADERS = {"authorization", "x-api-key", "proxy-authorization", "cookie"}
@@ -129,7 +129,7 @@ def build_fixture(flow: http.HTTPFlow, surface: str, version: str) -> dict[str, 
             f"REAL Claude Code {version} ({entrypoint} entrypoint) FULL system[] body. "
             "Captured via mitmproxy reverse proxy against the live upstream. cch redacted."
         ),
-        "_source": date.today().isoformat(),
+        "_source": datetime.now(UTC).date().isoformat(),
         "_surface": surface,
         "ua": headers.get("user-agent"),
         "betas": headers.get("anthropic-beta"),

@@ -186,8 +186,6 @@ func unaliasToolName(name string) string {
 	return name
 }
 
-// isTranslatedToClaude reports whether a payload goes from a non-Claude client
-// format to the Claude provider format.
 func isTranslatedToClaude(clientFormat, providerFormat string) bool {
 	if !strings.EqualFold(strings.TrimSpace(providerFormat), claudeFormat) {
 		return false

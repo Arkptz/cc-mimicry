@@ -131,10 +131,8 @@ func TestMultiToolUseReverseExact(t *testing.T) {
 	}
 }
 
-// TestStaticReverseIsUnconditional documents the inherited behavior (verified
-// byte-identical to the pre-refactor tree) that restoreToolNamesInBytes ALWAYS
-// applies the static prefix reverse, even with a nil rw. This is a deliberate
-// preservation pin, not an endorsement — flagged in SPEC-001 as a known edge.
+// With a nil rw restoreToolNamesInBytes applies the static prefix reverse; the
+// interceptors call it that way only for a host that sends no RequestID (ADR-006).
 func TestStaticReverseIsUnconditional(t *testing.T) {
 	chunk := []byte(`{"type":"tool_use","name":"sessions_list"}`)
 	restored := restoreToolNamesInBytes(chunk, nil)

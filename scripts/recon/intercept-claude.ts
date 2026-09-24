@@ -262,7 +262,6 @@ function printCapture(capture: CapturedRequest): {
   console.log(`\n${c.bold(`Model: ${capture.model}`)}`)
   console.log(`${"─".repeat(50)}`)
 
-  // Get our effective betas for this model
   const ourBetas = getOurBetas(capture.model)
 
   // Betas diff

@@ -104,7 +104,6 @@ func interceptResponse(raw []byte) ([]byte, error) {
 	return okEnvelope(resp)
 }
 
-// interceptStreamChunk reverses tool-name obfuscation on each stream chunk.
 func interceptStreamChunk(raw []byte) ([]byte, error) {
 	var req pluginapi.StreamChunkInterceptRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
@@ -155,7 +154,6 @@ func isAnthropicClaudeRequest(sourceFormat string, body []byte) bool {
 	}
 }
 
-// headerValue returns the first value for key, tolerating a nil header.
 func headerValue(h http.Header, key string) string {
 	if h == nil {
 		return ""

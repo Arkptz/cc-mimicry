@@ -11,7 +11,6 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// decodeEnvelopeResult unwraps the ok-envelope and unmarshals its result into v.
 func decodeEnvelopeResult(t *testing.T, raw []byte, v any) {
 	t.Helper()
 	var env struct {

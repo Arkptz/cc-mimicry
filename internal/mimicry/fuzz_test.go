@@ -46,7 +46,7 @@ func FuzzToolNameRoundTrip(f *testing.F) {
 
 		rw := buildToolNameRewriteFromBody([]byte(body))
 		if rw.empty() {
-			return // nothing was renamed (all names hit no rule) — invariant vacuous
+			return // no name matches a rename rule, so there is nothing to round-trip
 		}
 
 		// Build ONE chunk that references EVERY fake as a distinct JSON name

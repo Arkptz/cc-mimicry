@@ -35,7 +35,6 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     console.log(`\n>>> ${req.method} ${req.url}`)
     const bodyStr = Buffer.concat(chunks).toString()
 
-    // Extract the cch from the billing header in the body
     const cchMatch = bodyStr.match(/cch=([0-9a-f]{5})/)
     const realCch = cchMatch ? cchMatch[1] : null
 
@@ -43,7 +42,6 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     console.log("Body length:", bodyStr.length)
     console.log("Real cch from Claude CLI:", realCch)
 
-    // Now compute what our implementation produces
     // Replace the real cch with 00000 placeholder to simulate what Bun hashes
     const bodyWithPlaceholder = bodyStr.replace(/cch=[0-9a-f]{5}/, "cch=00000")
     const encoder = new TextEncoder()

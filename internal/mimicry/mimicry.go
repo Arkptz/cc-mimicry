@@ -63,7 +63,7 @@ func betaTokensContain(header, token string) bool {
 // (Anthropic returns 400 "Extra inputs are not permitted" otherwise).
 //
 // The tool rewrite map is returned so the caller can stash it for the reverse
-// pass. rw is nil when nothing was renamed.
+// pass. rw is nil when no tool name matches a rename rule.
 func applyRequestMimicry(body []byte, cfg pluginConfig, profile SurfaceProfile, contextMgmtEnabled bool) ([]byte, *toolNameRewrite) {
 	if len(body) == 0 {
 		return body, nil
@@ -121,7 +121,6 @@ func rewriteSystemForClaudeCode(body []byte, profile SurfaceProfile) []byte {
 	return body
 }
 
-// extractSystemText flattens a string or array system field into plain text.
 func extractSystemText(system gjson.Result) string {
 	if !system.Exists() {
 		return ""
@@ -203,8 +202,6 @@ func jsonTextBlockRaw(text, cacheControlRaw string) string {
 	return block
 }
 
-// prependSystemAsMessages inserts a user/assistant pair carrying the original
-// system prompt at the head of messages[].
 func prependSystemAsMessages(body []byte, originalSystemText string) []byte {
 	// Errors discarded: sjson.SetRaw on the constant role scaffolds with a valid
 	// raw JSON content array cannot fail for these fixed paths.

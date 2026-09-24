@@ -6,7 +6,6 @@ import (
 	"testing"
 )
 
-// benchToolsBody builds a request body declaring n renameable tools.
 func benchToolsBody(n int) []byte {
 	var b strings.Builder
 	b.WriteString(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"go"}],"tools":[`)
