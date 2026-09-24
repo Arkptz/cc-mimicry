@@ -17,7 +17,7 @@ const (
 
 	// cliTargetVersion is the impersonation target version. Real CLI captures
 	// used to derive the surface profiles were taken at exactly this version.
-	cliTargetVersion = "2.1.280"
+	cliTargetVersion = "2.1.281"
 
 	// billingBuildhashSalt is the deterministic salt fed into sha256 to derive
 	// the placeholder "buildhash" segment of the billing block. CPA strips /
