@@ -54,9 +54,14 @@ README_VERSION_RE = re.compile(
 # user-agent and package-version must track the same target as the plugin
 # constants, or copy-pasting it reintroduces the version-gate 400.
 README_HEADER_UA_RE = re.compile(
-    r'(^\s*user-agent:\s*"claude-cli/)[0-9]+(?:\.[0-9]+)*(\s\(external,\s*cli\)")', re.M
+    r'(^[ \t]*claude-header-defaults:[ \t]*\n(?:[ \t]+.*\n)*?[ \t]+user-agent:\s*"claude-cli/)'
+    r'[0-9]+(?:\.[0-9]+)*(\s\(external,\s*cli\)")',
+    re.M,
 )
-README_HEADER_PKG_RE = re.compile(r'(^\s*package-version:\s*")[^"]*(")', re.M)
+README_HEADER_PKG_RE = re.compile(
+    r'(^[ \t]*claude-header-defaults:[ \t]*\n(?:[ \t]+.*\n)*?[ \t]+package-version:\s*")[^"]*(")',
+    re.M,
+)
 
 
 def die(msg: str) -> None:
@@ -117,29 +122,21 @@ def main() -> int:
     if pkg_cli != pkg_sdk or not pkg_cli:
         die(f"captures disagree on x-stainless-package-version: {pkg_cli!r} vs {pkg_sdk!r}")
 
-    touched: list[str] = []
+    # Every output is computed and validated before the first write, so a
+    # missing pin leaves the tree untouched.
+    mimicry_dir = repo / "internal" / "mimicry"
+    outputs: dict[Path, str] = {}
 
-    mimicry = repo / "internal" / "mimicry" / "mimicry.go"
-    src = mimicry.read_text(encoding="utf-8")
-    src = replace_const(src, "cliTargetVersion", version, mimicry)
-    mimicry.write_text(src, encoding="utf-8")
-    touched.append(str(mimicry.relative_to(repo)))
+    path = mimicry_dir / "mimicry.go"
+    outputs[path] = replace_const(path.read_text(encoding="utf-8"), "cliTargetVersion", version, path)
 
-    surface = repo / "internal" / "mimicry" / "surface.go"
-    src = surface.read_text(encoding="utf-8")
-    src = replace_const(src, "cliVersion", version, surface)
-    surface.write_text(src, encoding="utf-8")
-    touched.append(str(surface.relative_to(repo)))
+    path = mimicry_dir / "surface.go"
+    outputs[path] = replace_const(path.read_text(encoding="utf-8"), "cliVersion", version, path)
 
-    egress = repo / "internal" / "mimicry" / "egress_headers.go"
-    src = egress.read_text(encoding="utf-8")
-    src = replace_const(src, "stainlessPackageVersion", pkg_cli, egress)
-    egress.write_text(src, encoding="utf-8")
-    touched.append(str(egress.relative_to(repo)))
+    path = mimicry_dir / "egress_headers.go"
+    outputs[path] = replace_const(path.read_text(encoding="utf-8"), "stainlessPackageVersion", pkg_cli, path)
 
-    intro_path = repo / "internal" / "mimicry" / "surfacedata" / "shared_intro.txt"
-    intro_path.write_text(intro_cli, encoding="utf-8")
-    touched.append(str(intro_path.relative_to(repo)))
+    outputs[mimicry_dir / "surfacedata" / "shared_intro.txt"] = intro_cli
 
     readme = repo / "README.md"
     src = readme.read_text(encoding="utf-8")
@@ -152,8 +149,12 @@ def main() -> int:
     if not README_HEADER_PKG_RE.search(src):
         die("README.md: claude-header-defaults package-version line is missing")
     src = README_HEADER_PKG_RE.sub(rf"\g<1>{pkg_cli}\g<2>", src, count=1)
-    readme.write_text(src, encoding="utf-8")
-    touched.append(str(readme.relative_to(repo)))
+    outputs[readme] = src
+
+    touched: list[str] = []
+    for path, content in outputs.items():
+        path.write_text(content, encoding="utf-8")
+        touched.append(str(path.relative_to(repo)))
 
     for name in touched:
         print(f"retarget: updated {name}")
