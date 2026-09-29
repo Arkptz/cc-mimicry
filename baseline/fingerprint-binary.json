@@ -9,7 +9,6 @@
     "cache-diagnosis-2026-04-07",
     "ccr-byoc-2025-07-29",
     "ccr-triggers-2026-01-30",
-    "compact-2026-01-12",
     "computer-use",
     "context-1m-2025-08-07",
     "context-hint-2026-04-09",
@@ -59,9 +58,9 @@
     "user-profiles-2026-03-24",
     "web-search-2025-03-05"
   ],
-  "ua_embedded_version": "2.1.283",
+  "ua_embedded_version": "2.1.284",
   "user_agent_template": "claude-cli/<> (external, <><><><>)",
-  "version": "2.1.283",
+  "version": "2.1.284",
   "x_app_values": [
     "cli",
     "sdk-cli",
