@@ -52,12 +52,14 @@ type SurfaceProfile struct {
 var sharedSystemIntro string
 
 // cliBetas is the ordered anthropic-beta token set for the interactive TUI
-// entrypoint (11 tokens: adds redact-thinking-2026-02-12 vs sdk-cli).
+// entrypoint. Since 2.1.288 the set is redact-thinking-free on the wire and
+// adds thinking-display-updates-2026-08-18 (both tokens still exist in the
+// CLI binary; redact-thinking became firstParty-gated).
 var cliBetas = []string{
 	"claude-code-20250219",
 	"oauth-2025-04-20",
 	"interleaved-thinking-2025-05-14",
-	"redact-thinking-2026-02-12",
+	"thinking-display-updates-2026-08-18",
 	"thinking-token-count-2026-05-13",
 	"context-management-2025-06-27",
 	"prompt-caching-scope-2026-01-05",
@@ -68,7 +70,7 @@ var cliBetas = []string{
 }
 
 // sdkCLIBetas is the ordered anthropic-beta token set for the -p / print
-// entrypoint (10 tokens: no redact-thinking-2026-02-12).
+// entrypoint.
 var sdkCLIBetas = []string{
 	"claude-code-20250219",
 	"oauth-2025-04-20",

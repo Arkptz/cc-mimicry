@@ -14,7 +14,7 @@ import (
 func assertSharedStainless(t *testing.T, h http.Header) {
 	t.Helper()
 	want := map[string]string{
-		"X-Stainless-Package-Version":               "0.112.1",
+		"X-Stainless-Package-Version":               stainlessPackageVersion,
 		"X-Stainless-Runtime-Version":               "v26.3.0",
 		"X-Stainless-Os":                            "Linux",
 		"X-Stainless-Arch":                          "x64",
@@ -44,8 +44,8 @@ func TestBuildEgressHeaderResponse_CLISurface(t *testing.T) {
 	if len(betas) != 11 {
 		t.Fatalf("cli betas len = %d, want 11", len(betas))
 	}
-	if !containsToken(betas, "redact-thinking-2026-02-12") {
-		t.Fatalf("cli betas missing redact-thinking-2026-02-12: %v", betas)
+	if !containsToken(betas, "thinking-display-updates-2026-08-18") {
+		t.Fatalf("cli betas missing thinking-display-updates-2026-08-18: %v", betas)
 	}
 	assertSharedStainless(t, resp.Headers)
 }
