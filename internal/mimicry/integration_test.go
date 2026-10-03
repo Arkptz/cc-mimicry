@@ -63,7 +63,7 @@ func TestIntegrationFingerprintPipeline(t *testing.T) {
 			profile:     CLISurface,
 			capture:     "cli-body.json",
 			betaCount:   11,
-			betaMarker:  "redact-thinking-2026-02-12",
+			betaMarker:  "thinking-display-updates-2026-08-18",
 			betaAntiTok: "",
 		},
 		{

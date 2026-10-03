@@ -7,6 +7,7 @@ code_paths:
 - internal/mimicry/toolrewrite.go
 - internal/mimicry/config.go
 - internal/mimicry/normalizers.go
+- internal/mimicry/egress_headers.go
 date: 2026-07-10
 depends_on:
 - ADR-002
@@ -31,7 +32,7 @@ As a CPA operator, I want the plugin to transform Anthropic /v1/messages request
 - System rewrite is owned by the plugin interceptor (body transform); header injection is owned by the new EgressHeaderInterceptor (P4 hook). Both are driven by the surface config in the plugin. Surface coherence is atomic under stable config; a reconfigure during in-flight requests may cause a one-request divergence (body surface A with header surface B). Per-request surface pinning (R9) is not implemented — Metadata correlation is not populated by CPA.
 - System rewrite is skipped (no-op) when the system field already begins with the "You are Claude Code" identity prefix (no double-wrap).
 - System rewrite relocates the original system text into a messages[0] user + messages[1] assistant pair so the model still receives the caller's instructions.
-- Two surfaces are supported: `cli` (default — 11 beta tokens including redact-thinking-2026-02-12) and `sdk-cli` (10 beta tokens, omits redact-thinking). Surface config in plugin drives both body blocks and egress headers. The Anthropic-Beta header is wholesale-replaced with the surface's exact token set; client-requested betas outside the set are intentionally dropped for fingerprint fidelity.
+- Two surfaces are supported: `cli` (default — 11 beta tokens including thinking-display-updates-2026-08-18) and `sdk-cli` (10 beta tokens, omits it). Surface config in plugin drives both body blocks and egress headers. The Anthropic-Beta header is wholesale-replaced with the surface's exact token set; client-requested betas outside the set are intentionally dropped for fingerprint fidelity.
 - CPA xxHash64 signing (cch field): CPA's signer runs independently of ShouldCloak, over the final request body after the plugin has written the cch=00000 placeholder in block [0]. The skip-guard at CPA:1865 defers to the plugin billing prefix so no double-injection occurs.
 - Dead code removed: claudeCodeHeaderOverrides, mergeClaudeCodeBeta, headerValue, and NormalizeHeaders are no longer part of the pipeline; the normalize_headers config toggle is obsolete.
 - Tool-name obfuscation uses a dynamic FNV-seeded readable-alias shuffle when a request declares more than 5 mimicable tools, and a static prefix map (`sessions_`→`cc_sess_`, `session_`→`cc_ses_`, `mcp_`→`cc_mcp_`) for every tool the dynamic map does not cover, at any tool count. The `mcp_` entry applies only when the next byte is `[a-z0-9]`: Anthropic rejects `^mcp_[a-z0-9]` tool names with HTTP 400 "Third-party apps now draw from your extra usage", while the CLI's own `mcp__server__tool` names pass. An alias that equals another declared tool name is not applied.
