@@ -18,7 +18,7 @@ import (
 // cliVersion is the Claude Code CLI version this plugin impersonates. It is
 // embedded in the User-Agent string emitted by the egress header interceptor
 // and must match the version tuple captured under testdata/captures/.
-const cliVersion = "2.1.284"
+const cliVersion = "2.1.288"
 
 // UserAgent returns the outbound User-Agent string for this surface, matching
 // the real CLI format: "claude-cli/<version> (external, <entrypoint>)".

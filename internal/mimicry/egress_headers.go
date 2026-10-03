@@ -22,7 +22,7 @@ import (
 // surface-invariant (identical between the interactive TUI and the -p / print
 // entrypoint) — only the User-Agent and Anthropic-Beta set diverge per surface.
 const (
-	stainlessPackageVersion = "0.112.1"
+	stainlessPackageVersion = "0.128.0"
 	stainlessRuntimeVersion = "v26.3.0"
 	stainlessOS             = "Linux"
 	stainlessArch           = "x64"
