@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.0](https://github.com/Arkptz/cc-mimicry/compare/v0.6.0...v0.7.0) (2026-10-03)
+
+
+### Features
+
+* retarget fingerprint to 2.1.288 ([1112784](https://github.com/Arkptz/cc-mimicry/commit/111278406ec042460e13cae20f1aa5ad6b18289b))
+
+
+### Bug Fixes
+
+* follow the 2.1.288 cli beta set on the wire ([fd594e7](https://github.com/Arkptz/cc-mimicry/commit/fd594e7f312992147bffff8c56c3b6697214eb13))
+
 ## [0.6.0](https://github.com/Arkptz/cc-mimicry/compare/v0.5.0...v0.6.0) (2026-09-29)
 
 
