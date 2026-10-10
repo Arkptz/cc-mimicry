@@ -6,7 +6,7 @@
 the native Claude Code CLI — so pooled subscriptions are not flagged as
 third-party clients.**
 
-Currently impersonating Claude Code CLI <!-- cc-target-version:start -->**2.1.288**<!-- cc-target-version:end -->,
+Currently impersonating Claude Code CLI <!-- cc-target-version:start -->**2.1.296**<!-- cc-target-version:end -->,
 kept current by a nightly drift check against the real binary.
 
 [![CI](https://github.com/Arkptz/cc-mimicry/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Arkptz/cc-mimicry/actions/workflows/ci.yml?query=branch%3Amain)
@@ -123,7 +123,7 @@ otherwise skip this block entirely:
 
 ```yaml
 claude-header-defaults:
-  user-agent: "claude-cli/2.1.288 (external, cli)"
+  user-agent: "claude-cli/2.1.296 (external, cli)"
   package-version: "0.128.0"
   runtime-version: "v26.3.0"
   os: "Linux"
