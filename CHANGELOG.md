@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/Arkptz/cc-mimicry/compare/v0.8.0...v0.9.0) (2026-10-14)
+
+
+### Features
+
+* retarget fingerprint to 2.1.299 ([01e10f6](https://github.com/Arkptz/cc-mimicry/commit/01e10f66159204456f5be8e6e58ec1842452d128))
+
 ## [0.8.0](https://github.com/Arkptz/cc-mimicry/compare/v0.7.0...v0.8.0) (2026-10-10)
 
 
