@@ -91,12 +91,20 @@ func TestIntegrationFingerprintPipeline(t *testing.T) {
 // They are NOT unverified: each one is present in the 2.1.268 ELF (PROC-001
 // Step B). Anything outside this list must match the capture exactly — keeping
 // the list short and explicit is what makes a dropped token fail the test.
+//
+// prompt-caching-scope-2026-01-05 is different in kind: since 2.1.310 its
+// emission condition also requires the base URL to be firstParty (unset or
+// api.anthropic.com, or _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL), so the
+// nightly capture — which drives the CLI at a fake 127.0.0.1 upstream — no
+// longer shows it. A direct api.anthropic.com user still gets it, so it stays
+// in the impersonated set.
 var authGatedBetas = []string{
 	"oauth-2025-04-20",
 	"advisor-tool-2026-03-01",
 	"advanced-tool-use-2025-11-20",
 	"extended-cache-ttl-2025-04-11",
 	"cache-diagnosis-2026-04-07",
+	"prompt-caching-scope-2026-01-05",
 }
 
 // capture models the subset of the golden JSON this test reads. Fields absent
