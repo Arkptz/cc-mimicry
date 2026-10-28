@@ -15,7 +15,7 @@ func assertSharedStainless(t *testing.T, h http.Header) {
 	t.Helper()
 	want := map[string]string{
 		"X-Stainless-Package-Version":               stainlessPackageVersion,
-		"X-Stainless-Runtime-Version":               "v26.3.0",
+		"X-Stainless-Runtime-Version":               stainlessRuntimeVersion,
 		"X-Stainless-Os":                            "Linux",
 		"X-Stainless-Arch":                          "x64",
 		"X-Stainless-Runtime":                       "node",

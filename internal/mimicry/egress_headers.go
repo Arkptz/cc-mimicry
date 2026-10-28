@@ -23,7 +23,7 @@ import (
 // entrypoint) — only the User-Agent and Anthropic-Beta set diverge per surface.
 const (
 	stainlessPackageVersion = "0.128.0"
-	stainlessRuntimeVersion = "v26.3.0"
+	stainlessRuntimeVersion = "v26.12.1"
 	stainlessOS             = "Linux"
 	stainlessArch           = "x64"
 	stainlessRuntime        = "node"
