@@ -125,14 +125,15 @@ otherwise skip this block entirely:
 claude-header-defaults:
   user-agent: "claude-cli/2.1.312 (external, cli)"
   package-version: "0.128.0"
-  runtime-version: "v26.3.0"
+  runtime-version: "v26.12.1"
   os: "Linux"
   arch: "x64"
 ```
 
-The nightly retarget rewrites `user-agent` and `package-version` there along
-with the plugin's own constants. `runtime-version`, `os` and `arch` are not
-retargeted; the plugin's egress headers override them whenever it is loaded.
+The nightly retarget rewrites `user-agent`, `package-version` and
+`runtime-version` there along with the plugin's own constants. `os` and `arch`
+are not retargeted; the plugin's egress headers override them whenever it is
+loaded.
 
 #### Home/worker clusters
 

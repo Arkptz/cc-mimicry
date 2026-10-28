@@ -8,7 +8,9 @@ and mechanically updates every version-pinned surface in the plugin source:
   - internal/mimicry/surface.go   cliVersion constant
   - internal/mimicry/egress_headers.go
                                   stainlessPackageVersion (from the capture's
-                                  x-stainless-package-version header)
+                                  x-stainless-package-version header) and
+                                  stainlessRuntimeVersion (from
+                                  x-stainless-runtime-version)
   - internal/mimicry/surfacedata/shared_intro.txt
                                   system[2] static prefix (everything before
                                   the "# Session-specific guidance" marker)
@@ -51,8 +53,9 @@ README_VERSION_RE = re.compile(
 )
 
 # The host-settings snippet spells out a claude-header-defaults block whose
-# user-agent and package-version must track the same target as the plugin
-# constants, or copy-pasting it reintroduces the version-gate 400.
+# user-agent, package-version and runtime-version must track the same target
+# as the plugin constants, or copy-pasting it reintroduces the version-gate
+# 400.
 README_HEADER_UA_RE = re.compile(
     r'(^[ \t]*claude-header-defaults:[ \t]*\n(?:[ \t]+.*\n)*?[ \t]+user-agent:\s*"claude-cli/)'
     r'[0-9]+(?:\.[0-9]+)*(\s\(external,\s*cli\)")',
@@ -60,6 +63,10 @@ README_HEADER_UA_RE = re.compile(
 )
 README_HEADER_PKG_RE = re.compile(
     r'(^[ \t]*claude-header-defaults:[ \t]*\n(?:[ \t]+.*\n)*?[ \t]+package-version:\s*")[^"]*(")',
+    re.MULTILINE,
+)
+README_HEADER_RUNTIME_RE = re.compile(
+    r'(^[ \t]*claude-header-defaults:[ \t]*\n(?:[ \t]+.*\n)*?[ \t]+runtime-version:\s*")[^"]*(")',
     re.MULTILINE,
 )
 
@@ -121,6 +128,10 @@ def main() -> int:
     pkg_sdk = (sdk.get("headers") or {}).get("x-stainless-package-version")
     if pkg_cli != pkg_sdk or not pkg_cli:
         die(f"captures disagree on x-stainless-package-version: {pkg_cli!r} vs {pkg_sdk!r}")
+    runtime_cli = (cli.get("headers") or {}).get("x-stainless-runtime-version")
+    runtime_sdk = (sdk.get("headers") or {}).get("x-stainless-runtime-version")
+    if runtime_cli != runtime_sdk or not runtime_cli:
+        die(f"captures disagree on x-stainless-runtime-version: {runtime_cli!r} vs {runtime_sdk!r}")
 
     # Every output is computed and validated before the first write, so a
     # missing pin leaves the tree untouched.
@@ -134,7 +145,9 @@ def main() -> int:
     outputs[path] = replace_const(path.read_text(encoding="utf-8"), "cliVersion", version, path)
 
     path = mimicry_dir / "egress_headers.go"
-    outputs[path] = replace_const(path.read_text(encoding="utf-8"), "stainlessPackageVersion", pkg_cli, path)
+    source = path.read_text(encoding="utf-8")
+    source = replace_const(source, "stainlessPackageVersion", pkg_cli, path)
+    outputs[path] = replace_const(source, "stainlessRuntimeVersion", runtime_cli, path)
 
     outputs[mimicry_dir / "surfacedata" / "shared_intro.txt"] = intro_cli
 
@@ -149,6 +162,9 @@ def main() -> int:
     if not README_HEADER_PKG_RE.search(src):
         die("README.md: claude-header-defaults package-version line is missing")
     src = README_HEADER_PKG_RE.sub(rf"\g<1>{pkg_cli}\g<2>", src, count=1)
+    if not README_HEADER_RUNTIME_RE.search(src):
+        die("README.md: claude-header-defaults runtime-version line is missing")
+    src = README_HEADER_RUNTIME_RE.sub(rf"\g<1>{runtime_cli}\g<2>", src, count=1)
     outputs[readme] = src
 
     touched: list[str] = []
