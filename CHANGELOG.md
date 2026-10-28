@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.11.0](https://github.com/Arkptz/cc-mimicry/compare/v0.10.0...v0.11.0) (2026-10-28)
+
+
+### Features
+
+* retarget fingerprint to 2.1.310 ([0230478](https://github.com/Arkptz/cc-mimicry/commit/023047820a2ff2b4823b062d40508a7461cb5586))
+* retarget fingerprint to 2.1.312 ([086f9b0](https://github.com/Arkptz/cc-mimicry/commit/086f9b0840231f87e81eede1149bec27128ffd8e))
+
+
+### Bug Fixes
+
+* allow prompt-caching-scope as base-URL-gated in the beta equality test ([7b96957](https://github.com/Arkptz/cc-mimicry/commit/7b969579f9697de41e7c2f83312427c2202ce81a))
+* retarget x-stainless-runtime-version to v26.12.1 ([b923d28](https://github.com/Arkptz/cc-mimicry/commit/b923d28a15d064c721fb6ef8d7cea2bf369d79cf))
+
 ## [0.10.0](https://github.com/Arkptz/cc-mimicry/compare/v0.9.0...v0.10.0) (2026-10-19)
 
 
