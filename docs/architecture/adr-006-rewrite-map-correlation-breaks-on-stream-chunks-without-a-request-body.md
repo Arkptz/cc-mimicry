@@ -85,3 +85,19 @@ translated routes, with no host change.
 4. Models served from a `claude-api-key` entry with `is-compat: true` are
    translated outside CPA's translator registry, so `request.normalize` never
    runs for them and their `mcp_*` names still go upstream unchanged.
+
+## Amendment 2026-11-06: dynamic aliases on translated routes
+
+Anthropic also rejects some third-party tool sets as a whole with the same
+"Third-party apps" 400, even when every single name passes. A Hermes
+`/v1/responses` request with 28 tools (`kanban_*`, `read_file`, `terminal`,
+...) was rejected; any 14 of them passed, and the full request passed once the
+names were replaced with dynamic aliases. Decision 3 is therefore widened:
+`request.normalize` applies the dynamic aliases too and stores the map in a
+bounded FIFO keyed by a SHA-256 of the aliased, ordered tool-name list. The
+host attaches the normalized provider request to `response.normalize_before`
+as `TranslatedRequest`, so the reverse recomputes the key there with no request
+id. Two requests with the same key share the same map, because the dynamic map
+is a pure function of the tool-name list. When the entry is missing (evicted or
+plugin restart) only the static aliases are restored, and the client sees the
+dynamic aliases for that response.

@@ -2,7 +2,9 @@ package mimicry
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -20,14 +22,44 @@ import (
 // line before translating it back, so these two hooks rename and restore the
 // tool names there.
 //
-// request.normalize has no per-request context, so only the static prefix
-// rules apply: their reverse needs no per-request map. The dynamic aliases
-// stay on the native path, which has the lifecycle RequestID to correlate hooks with.
+// request.normalize has no per-request context. The dynamic aliases are
+// correlated through translatedRewrites instead: the host hands the
+// normalized provider request back to response.normalize_before as
+// TranslatedRequest, so the aliased tool-name list identifies the map.
 
 const claudeFormat = "claude"
 
-// normalizeRequest applies the static tool-name rules to a request the host
-// translated into the Claude format. Native Claude requests pass through: the
+// translatedRewrites holds the rewrite maps of translated requests, keyed by
+// translatedToolsKey of the rewritten body. The dynamic map is a pure function
+// of the tool-name list, so two requests that share a key share the map.
+var translatedRewrites = newBoundedRewriteStore(2048)
+
+// translatedToolsKey hashes the ordered mimicable tool names of a Claude
+// request body. It ignores everything else, because the executor adds
+// cache_control and other fields after request.normalize.
+func translatedToolsKey(body []byte) string {
+	tools := gjson.GetBytes(body, "tools")
+	if !tools.IsArray() {
+		return ""
+	}
+	h := sha256.New()
+	n := 0
+	tools.ForEach(func(_, t gjson.Result) bool {
+		if shouldMimicToolName(t.Get("type").String()) {
+			_, _ = h.Write([]byte(t.Get("name").String()))
+			_, _ = h.Write([]byte{0})
+			n++
+		}
+		return true
+	})
+	if n == 0 {
+		return ""
+	}
+	return "tools:" + hex.EncodeToString(h.Sum(nil))
+}
+
+// normalizeRequest applies the static and dynamic tool-name rules to a request
+// the host translated into the Claude format. Native Claude requests pass through: the
 // host also calls this hook on claude->claude after interceptRequestBefore has
 // already rewritten the body.
 func normalizeRequest(raw []byte) ([]byte, error) {
@@ -38,21 +70,24 @@ func normalizeRequest(raw []byte) ([]byte, error) {
 	if !isTranslatedToClaude(req.FromFormat, req.ToFormat) || !currentConfig().ObfuscateToolNames {
 		return okEnvelope(pluginapi.PayloadResponse{})
 	}
-	rw := buildToolNameRewrite(req.Body, false)
+	rw := buildToolNameRewriteFromBody(req.Body)
 	if rw.empty() {
 		return okEnvelope(pluginapi.PayloadResponse{})
 	}
-	return okEnvelope(pluginapi.PayloadResponse{Body: applyToolNameRewriteToBody(req.Body, rw, false)})
+	body := applyToolNameRewriteToBody(req.Body, rw, false)
+	translatedRewrites.put(translatedToolsKey(body), rw)
+	return okEnvelope(pluginapi.PayloadResponse{Body: body})
 }
 
-// normalizeResponseBefore restores the static tool-name aliases in a Claude
+// normalizeResponseBefore restores the tool-name aliases in a Claude
 // response before the host translates it for a non-Claude client, so the
 // translator's tool lookups against the client request see the real names.
 // Here the provider format is FromFormat and the client format is ToFormat.
 //
 // The host calls this once per SSE line with both request bodies attached, so
 // the envelope is read with gjson and the request bodies are only decoded for
-// a line that carries a tool_use block with an alias name.
+// a line that carries a tool_use block. Without a stored map (evicted, or the
+// plugin restarted) only the static aliases are restored.
 func normalizeResponseBefore(raw []byte) ([]byte, error) {
 	fields := gjson.GetManyBytes(raw, "FromFormat", "ToFormat")
 	if !isTranslatedToClaude(fields[1].String(), fields[0].String()) {
@@ -62,14 +97,22 @@ func normalizeResponseBefore(raw []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !bytes.Contains(body, []byte(`"tool_use"`)) || !containsStaticAlias(body) {
+	if !bytes.Contains(body, []byte(`"tool_use"`)) {
+		return okEnvelope(pluginapi.PayloadResponse{})
+	}
+	translated, err := decodeBytesField(raw, "TranslatedRequest")
+	if err != nil {
+		return nil, err
+	}
+	rw := translatedRewrites.get(translatedToolsKey(translated))
+	if rw.empty() && !containsStaticAlias(body) {
 		return okEnvelope(pluginapi.PayloadResponse{})
 	}
 	original, err := decodeBytesField(raw, "OriginalRequest")
 	if err != nil {
 		return nil, err
 	}
-	restored := restoreToolUseNames(body, original)
+	restored := restoreToolUseNames(body, original, rw)
 	if bytesEqual(restored, body) {
 		return okEnvelope(pluginapi.PayloadResponse{})
 	}
@@ -100,20 +143,21 @@ func containsStaticAlias(data []byte) bool {
 }
 
 // restoreToolUseNames rewrites the name of each tool_use block in a Claude
-// response from a static alias back to the real name. The body is a JSON
+// response from an alias back to the real name: through rw when the request's
+// map is known, otherwise through the static prefixes. The body is a JSON
 // message, one SSE line, or (for a non-stream call the executor served from an
 // upstream stream) a whole SSE transcript. Only the name field is touched:
 // text, thinking and tool input stay as the model wrote them. A name the
 // client itself sent in its original request is a real tool that happens to
 // look like an alias and is kept.
-func restoreToolUseNames(body, originalRequest []byte) []byte {
+func restoreToolUseNames(body, originalRequest []byte, rw *toolNameRewrite) []byte {
 	if gjson.ValidBytes(body) {
-		return restoreToolUseNamesInJSON(body, originalRequest)
+		return restoreToolUseNamesInJSON(body, originalRequest, rw)
 	}
 	lines := bytes.SplitAfter(body, []byte("\n"))
 	changed := false
 	for i, line := range lines {
-		restored := restoreToolUseNamesInSSELine(line, originalRequest)
+		restored := restoreToolUseNamesInSSELine(line, originalRequest, rw)
 		if !bytesEqual(restored, line) {
 			lines[i] = restored
 			changed = true
@@ -127,7 +171,7 @@ func restoreToolUseNames(body, originalRequest []byte) []byte {
 
 // restoreToolUseNamesInSSELine handles one "data: {...}" line, keeping its
 // prefix and line terminator; any other line is returned unchanged.
-func restoreToolUseNamesInSSELine(line, originalRequest []byte) []byte {
+func restoreToolUseNamesInSSELine(line, originalRequest []byte, rw *toolNameRewrite) []byte {
 	trimmed := bytes.TrimRight(line, "\r\n")
 	eol := line[len(trimmed):]
 	rest, ok := bytes.CutPrefix(trimmed, []byte("data:"))
@@ -135,7 +179,7 @@ func restoreToolUseNamesInSSELine(line, originalRequest []byte) []byte {
 		return line
 	}
 	payload := bytes.TrimLeft(rest, " \t")
-	restored := restoreToolUseNamesInJSON(payload, originalRequest)
+	restored := restoreToolUseNamesInJSON(payload, originalRequest, rw)
 	if bytesEqual(restored, payload) {
 		return line
 	}
@@ -146,7 +190,7 @@ func restoreToolUseNamesInSSELine(line, originalRequest []byte) []byte {
 	return append(out, eol...)
 }
 
-func restoreToolUseNamesInJSON(payload, originalRequest []byte) []byte {
+func restoreToolUseNamesInJSON(payload, originalRequest []byte, rw *toolNameRewrite) []byte {
 	if !gjson.ValidBytes(payload) {
 		return payload
 	}
@@ -157,7 +201,7 @@ func restoreToolUseNamesInJSON(payload, originalRequest []byte) []byte {
 			return
 		}
 		name := block.Get("name").String()
-		realName := unaliasToolName(name)
+		realName := unaliasTranslatedName(name, rw)
 		if realName == name || bytes.Contains(originalRequest, mustJSON(name)) {
 			return
 		}
@@ -173,6 +217,21 @@ func restoreToolUseNamesInJSON(payload, originalRequest []byte) []byte {
 		return true
 	})
 	return out
+}
+
+// unaliasTranslatedName maps an alias back to its real name through rw, which
+// already holds the request's static renames; without rw it falls back to the
+// static prefixes.
+func unaliasTranslatedName(name string, rw *toolNameRewrite) string {
+	if rw.empty() {
+		return unaliasToolName(name)
+	}
+	for _, pair := range rw.reverseOrdered {
+		if pair[0] == name {
+			return pair[1]
+		}
+	}
+	return name
 }
 
 // unaliasToolName maps a static alias back to its real name; any other name

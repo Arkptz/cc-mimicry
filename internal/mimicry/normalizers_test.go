@@ -2,6 +2,7 @@ package mimicry
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 func TestSanitizeToolNameMCPRule(t *testing.T) {
@@ -106,20 +108,55 @@ func TestNormalizeRequestTranslatedRoute(t *testing.T) {
 	}
 }
 
-// The static-only path never applies dynamic aliases, even above the threshold:
-// the response side has no state to reverse them with.
-func TestNormalizeRequestNoDynamicAliases(t *testing.T) {
+// Above the threshold a translated request gets the dynamic aliases: Anthropic
+// rejects some third-party tool sets as a whole even when every single name
+// passes. response.normalize_before finds the map through TranslatedRequest.
+func TestNormalizeRequestDynamicAliasesRoundTrip(t *testing.T) {
 	_ = configure(nil)
-	body := []byte(`{"tools":[{"name":"a1"},{"name":"a2"},{"name":"a3"},{"name":"a4"},{"name":"a5"},{"name":"a6"}]}`)
-	raw, _ := json.Marshal(pluginapi.RequestTransformRequest{FromFormat: "openai", ToFormat: "claude", Body: body})
+	body := []byte(`{"tools":[{"name":"kanban_show"},{"name":"kanban_list"},{"name":"memory"},` +
+		`{"name":"read_file"},{"name":"terminal"},{"name":"mcp_x"},{"type":"web_search_20250305","name":"web_search"}],` +
+		`"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"kanban_show","input":{}}]}]}`)
+	raw, _ := json.Marshal(pluginapi.RequestTransformRequest{FromFormat: "openai-response", ToFormat: "claude", Body: body})
 	out, err := normalizeRequest(raw)
 	if err != nil {
 		t.Fatalf("normalizeRequest: %v", err)
 	}
 	var resp pluginapi.PayloadResponse
 	decodeEnvelopeResult(t, out, &resp)
-	if len(resp.Body) != 0 {
-		t.Fatalf("expected passthrough, got %s", resp.Body)
+	fake := gjson.GetBytes(resp.Body, "tools.0.name").String()
+	if fake == "" || fake == "kanban_show" {
+		t.Fatalf("dynamic alias not applied: %s", resp.Body)
+	}
+	if got := gjson.GetBytes(resp.Body, "messages.0.content.0.name").String(); got != fake {
+		t.Fatalf("history tool_use = %q, want %q", got, fake)
+	}
+	if got := gjson.GetBytes(resp.Body, "tools.6.name").String(); got != "web_search" {
+		t.Fatalf("server tool renamed: %q", got)
+	}
+	for i := range 6 {
+		if strings.HasPrefix(gjson.GetBytes(resp.Body, fmt.Sprintf("tools.%d.name", i)).String(), "mcp_") {
+			t.Fatalf("mcp_ name went upstream: %s", resp.Body)
+		}
+	}
+
+	// The executor adds fields after normalization; the key ignores them.
+	translated, _ := sjson.SetBytes(resp.Body, "tools.5.cache_control", map[string]string{"type": "ephemeral"})
+	line := `data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t","name":"` + fake + `","input":{}}}`
+	got := callNormalizeResponseBefore(t, pluginapi.ResponseTransformRequest{
+		FromFormat: "claude", ToFormat: "openai-response", Stream: true,
+		OriginalRequest: []byte(`{"tools":[]}`), TranslatedRequest: translated, Body: []byte(line),
+	})
+	if want := strings.Replace(line, fake, "kanban_show", 1); string(got) != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+
+	// Without the stored map only the static aliases are restored.
+	got = callNormalizeResponseBefore(t, pluginapi.ResponseTransformRequest{
+		FromFormat: "claude", ToFormat: "openai-response", Stream: true,
+		OriginalRequest: []byte(`{"tools":[]}`), TranslatedRequest: []byte(`{"tools":[{"name":"other"}]}`), Body: []byte(line),
+	})
+	if len(got) != 0 {
+		t.Fatalf("expected passthrough without a map, got %s", got)
 	}
 }
 
