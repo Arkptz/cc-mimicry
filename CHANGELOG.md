@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/Arkptz/cc-mimicry/compare/v0.12.0...v0.12.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* apply dynamic tool aliases on translated routes ([c8846e7](https://github.com/Arkptz/cc-mimicry/commit/c8846e79344c7c9e7f7d0e9d96982eb15758a9ac))
+
 ## [0.12.0](https://github.com/Arkptz/cc-mimicry/compare/v0.11.0...v0.12.0) (2026-11-05)
 
 
