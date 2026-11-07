@@ -45,6 +45,7 @@
     "prompt-caching-scope-2026-01-05",
     "redact-thinking",
     "redact-thinking-2026-02-12",
+    "request-tags-2026-08-21",
     "server-side-fallback-2026-06-01",
     "server-side-fallback-2026-07-01",
     "structured-outputs",
@@ -61,9 +62,9 @@
     "user-profiles-2026-08-18",
     "web-search-2025-03-05"
   ],
-  "ua_embedded_version": "2.1.318",
+  "ua_embedded_version": "2.1.319",
   "user_agent_template": "claude-cli/<> (external, <><><><>)",
-  "version": "2.1.318",
+  "version": "2.1.319",
   "x_app_values": [
     "cli",
     "sdk-cli",
