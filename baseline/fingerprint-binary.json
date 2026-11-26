@@ -1,6 +1,5 @@
 {
   "beta_tokens": [
-    "0-alpha-2026-08-05",
     "advanced-tool-use-2025-11-20",
     "advisor-tool-2026-03-01",
     "afk-mode-2026-01-31",
@@ -45,10 +44,13 @@
     "prompt-caching-scope-2026-01-05",
     "redact-thinking",
     "redact-thinking-2026-02-12",
+    "request-tags-2026-08-21",
+    "resumption-2026-10-08",
     "server-side-fallback-2026-06-01",
     "server-side-fallback-2026-07-01",
     "structured-outputs",
     "structured-outputs-2025-12-15",
+    "subagent-review-2026-11-17",
     "task-budgets-2026-03-13",
     "thinking-binding-controls-2026-08-01",
     "thinking-display-updates-2026-08-18",
@@ -59,11 +61,12 @@
     "tool-provenance-2026-10-26",
     "tool-search-tool-2025-10-19",
     "user-profiles-2026-08-18",
-    "web-search-2025-03-05"
+    "web-search-2025-03-05",
+    "web-search-results-only-2026-11-15"
   ],
-  "ua_embedded_version": "2.1.318",
+  "ua_embedded_version": "2.1.332",
   "user_agent_template": "claude-cli/<> (external, <><><><>)",
-  "version": "2.1.318",
+  "version": "2.1.332",
   "x_app_values": [
     "cli",
     "sdk-cli",
